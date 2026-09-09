@@ -931,7 +931,7 @@ git commit -m "feat(net): reconnecting websocket transport"
 
 **Interfaces:**
 - Consumes: existing `CrackAttackEngine`, `AttackPayload`.
-- Produces: on `CrackAttackEngine` — `drainOutgoingAttacks(): AttackPayload[]`, `setOpponentLevelLights(bits: number): void`, `opponentLevelLights: number` on the snapshot, `exportLevelLights(): number`, and `forfeitWin(now: number): void`.
+- Produces: on `CrackAttackEngine` — `queueOutgoingAttack(a: AttackPayload): void`, `drainOutgoingAttacks(): AttackPayload[]`, `setOpponentLevelLights(bits: number): void`, `opponentLevelLights: number` on the snapshot, `exportLevelLights(now: number): number`, and `forfeitWin(now: number): void`, plus a `multiplayer?: boolean` constructor option.
 
 The engine already supports an `attackSink` callback. We add a buffered alternative so the match layer can drain on its own cadence rather than reacting per-attack, and a way to carry the opponent's light bits through to the renderer.
 
