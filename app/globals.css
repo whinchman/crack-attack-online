@@ -170,6 +170,24 @@ canvas:focus-visible {
 }
 
 /*
+ * Overlay <p> text has no backdrop of its own and sits directly over
+ * whatever the board is drawing underneath, including block colours that
+ * are randomised per seed. A light block behind pale overlay text would
+ * make it unreadable on some other seed than whichever one this was tested
+ * against, so a cheap shadow (not a scrim panel, to stay faithful to the
+ * original's look) holds it legible regardless of what's underneath.
+ * Two layers rather than one: .overlay-note's muted colour (#7781aa) still
+ * washed out against the brightest block colour (yellow) with a single
+ * soft shadow, so a tighter near-black layer is stacked under the wider
+ * blurred one for real contrast without looking like a heavy outline.
+ */
+.game-overlay p {
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.95),
+    0 0 5px rgba(0, 0, 0, 0.85);
+}
+
+/*
  * For overlays shown while the board may still be live (peer-gone grace
  * period, a reconnecting transport): informational only, no buttons, so
  * touches must fall through to the board underneath instead of being eaten.
