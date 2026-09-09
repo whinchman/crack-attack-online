@@ -88,15 +88,23 @@ jobs:
           echo "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      # The key on the server is locked to `command="rrsync ~/crackattack.217industries.com"`,
+      # The key on the server is locked to
+      # `command="/usr/bin/rrsync /home/crackattackdeploy/crackattack.217industries.com"`,
       # so it can do nothing but rsync into that one directory - no shell, no
-      # port forwarding, no reaching the main site. Paths below are relative to
-      # that restricted root.
+      # port forwarding. The subdomain is also a separate DreamHost user whose
+      # home the main site's account cannot read, so the isolation is enforced
+      # by the OS as well as by the key. `:/` below is the restricted root,
+      # not the filesystem root.
+      #
+      # --exclude='.dh-diag' protects a root-owned symlink DreamHost places in
+      # every site directory for its own diagnostics. Without it, --delete tries
+      # to remove DreamHost's file on every deploy.
       - name: Deploy
         run: |
           set -euo pipefail
           rsync -avz --delete \
-            -e "ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes" \
+            --exclude='.dh-diag' \
+            -e "ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o ControlPath=none" \
             dist-pages/ \
             ${{ secrets.DEPLOY_SSH_TARGET }}:/
 
