@@ -1776,16 +1776,35 @@ not reach the build and deploying now would ship a site that cannot connect.
 (`vite.pages.config.ts` sets `envDir: projectRoot`, so the repo-root `.env.production` is
 read. `.gitignore` covers `.env*`, so it correctly stays local.)
 
-### Step 4 — Deploy the site
+### Step 4 — Deploy the site to your own hosting
+
+The build is a relocatable static bundle — **656 KB**, only `.html`, `.js`, `.css`, `.png`,
+`.svg`, `.txt` and `.obj`. No WebAssembly, no service worker, no special response headers,
+and `base: "./"` means it runs from a subdirectory as happily as from a document root.
+Any web host serves it.
+
+Upload the **contents** of `dist-pages/` wherever you want it:
 
 ```bash
-npx wrangler pages deploy dist-pages --project-name crack-attack
+# whatever your host uses - sftp, rsync, a control-panel file manager:
+rsync -av --delete dist-pages/ you@217industries.com:~/public_html/crackattack/
 ```
 
-Decide now which URL is canonical. The GitHub Pages workflow publishes only when the
-`VITE_RELAY_BASE` repository variable is set, so it stays dormant by default — but if you
-want it live, set that variable in the repo settings and make sure `README.md` names the
-same URL you actually share.
+That gives you `https://217industries.com/crackattack/`, or point a subdomain at the same
+directory for `https://crackattack.217industries.com/`. Either works; the bundle does not
+care which.
+
+**HTTPS is required, not optional.** The "Copy challenge link" button uses the clipboard
+API, which browsers only expose in a secure context. On plain HTTP the button silently does
+nothing — the link is still shown as selectable text, so it degrades rather than breaks, but
+on a phone that is a bad experience. Most shared hosting includes free Let's Encrypt
+certificates; turn it on before sharing the URL.
+
+**The relay stays on `workers.dev`, and that is fine.** Players never see that hostname —
+it only ever appears inside a WebSocket connection string in the bundle. The only URL anyone
+pastes into Discord is your own. If you later want the relay on your domain too, move the
+zone's DNS to Cloudflare (free) and attach a custom domain to the Worker; nothing in the
+code changes.
 
 ### Step 5 — Smoke test, adversarially
 
