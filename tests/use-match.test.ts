@@ -1,7 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { challengeUrl, reduceMatch, roomCodeFromLocation } from "../app/net/useMatch.ts";
-import type { MatchState } from "../app/net/useMatch.ts";
+import {
+  challengeUrl,
+  matchOverlay,
+  reduceMatch,
+  roomCodeFromLocation,
+  soloControls,
+} from "../app/net/useMatch.ts";
+import type { MatchPhase, MatchState } from "../app/net/useMatch.ts";
 
 test("reads a room code from the fragment", () => {
   assert.equal(roomCodeFromLocation("https://x.dev/#room=AB3K9Z"), "AB3K9Z");
@@ -34,7 +40,7 @@ test("builds a shareable challenge url that drops any existing fragment", () => 
 
 const PLAYING: MatchState = {
   phase: "playing", status: "open", room: "AB3K9Z", link: "https://x.dev/#room=AB3K9Z",
-  outcome: null,
+  outcome: null, waitingForPeer: false,
 };
 
 test("a forfeit ends the match as a win and closes our end of the socket", () => {
@@ -79,4 +85,63 @@ test("start carries the relay's seed and role through to the controller", () => 
   const { state, effects } = reduceMatch(waiting, { t: "start", seed: 4242, role: "guest" });
   assert.equal(state.phase, "playing");
   assert.deepEqual(effects.begin, { seed: 4242, role: "guest" });
+});
+
+// --- overlay + control policy -------------------------------------------
+// Regression for FINAL-7 (a stall froze the board with nothing on screen) and
+// FINAL-8 (pause and solo restart stayed live during a match).
+
+test("a stall is surfaced instead of freezing the board silently", () => {
+  assert.equal(matchOverlay({ ...PLAYING, waitingForPeer: true }), "waiting-peer");
+});
+
+test("a healthy match in progress shows no overlay", () => {
+  assert.equal(matchOverlay(PLAYING), "none");
+});
+
+test("a dropped socket outranks the stall it causes, so only one overlay shows", () => {
+  // Losing our own socket is what stops syncs arriving, so it stalls us too.
+  // Two .game-overlay siblings render on top of each other illegibly.
+  const both: MatchState = { ...PLAYING, status: "reconnecting", waitingForPeer: true };
+  assert.equal(matchOverlay(both), "reconnecting");
+});
+
+test("every match state resolves to exactly one overlay", () => {
+  const phases: MatchPhase[] = ["solo", "waiting", "playing", "peer-gone", "over"];
+  const statuses: (MatchState["status"])[] = [null, "connecting", "open", "reconnecting", "closed"];
+  const expected: Record<MatchPhase, string[]> = {
+    solo: ["none"],
+    waiting: ["waiting"],
+    playing: ["none", "reconnecting", "waiting-peer"],
+    "peer-gone": ["peer-gone"],
+    over: ["over"],
+  };
+  for (const phase of phases) {
+    for (const status of statuses) {
+      for (const waitingForPeer of [false, true]) {
+        const got = matchOverlay({ ...PLAYING, phase, status, waitingForPeer });
+        assert.ok(
+          expected[phase].includes(got),
+          `phase=${phase} status=${status} waiting=${waitingForPeer} gave ${got}`,
+        );
+      }
+    }
+  }
+});
+
+test("pause and solo restart are dead during a match, whatever the game status", () => {
+  for (const phase of ["waiting", "playing", "peer-gone", "over"] as MatchPhase[]) {
+    for (const status of ["ready", "countdown", "playing", "paused", "gameover"]) {
+      const controls = soloControls(phase, status, true);
+      assert.equal(controls.canPause, false, `pause was live in phase ${phase}/${status}`);
+      assert.equal(controls.canRestart, false, `restart was live in phase ${phase}/${status}`);
+    }
+  }
+});
+
+test("pause and solo restart keep working in solo play", () => {
+  assert.equal(soloControls("solo", "playing", false).canPause, true);
+  assert.equal(soloControls("solo", "ready", false).canPause, false);
+  assert.equal(soloControls("solo", "gameover", true).canRestart, true);
+  assert.equal(soloControls("solo", "gameover", false).canRestart, false);
 });

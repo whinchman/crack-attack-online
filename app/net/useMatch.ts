@@ -39,6 +39,13 @@ export interface MatchState {
   room: string | null;
   link: string | null;
   /**
+   * True while our clock is held still because we have run too far ahead of
+   * the peer. Without this on screen a slow, backgrounded or laggy opponent
+   * freezes the board with no explanation -- the same silent-freeze failure
+   * the reconnect overlay exists to prevent, from the more common cause.
+   */
+  waitingForPeer: boolean;
+  /**
    * Why the match ended. The engine has no winner concept — `forfeitWin()`
    * only stops the simulation — so the outcome narrative lives here.
    */
@@ -49,6 +56,55 @@ function errorOutcome(reason: "full" | "missing" | "malformed"): MatchOutcome {
   if (reason === "missing") return "expired";
   if (reason === "full") return "full";
   return "ended";
+}
+
+export type MatchOverlay =
+  | "none"
+  | "waiting"
+  | "reconnecting"
+  | "waiting-peer"
+  | "peer-gone"
+  | "over";
+
+/**
+ * Which match overlay to show, at most one. `.game-overlay` carries no
+ * centring or padding of its own, so two rendered as siblings overlap into
+ * illegible text. Deciding here rather than with five independent JSX
+ * conditions makes "never more than one" a property a test can hold, instead
+ * of a coincidence between booleans.
+ */
+export function matchOverlay(state: MatchState): MatchOverlay {
+  switch (state.phase) {
+    case "solo": return "none";
+    case "over": return "over";
+    case "waiting": return "waiting";
+    case "peer-gone": return "peer-gone";
+    case "playing":
+      // Our own socket being down is the better explanation, and takes
+      // priority: losing it is exactly what stops syncs arriving and stalls us.
+      if (state.status === "reconnecting" || state.status === "connecting") return "reconnecting";
+      return state.waitingForPeer ? "waiting-peer" : "none";
+  }
+}
+
+/**
+ * Whether the single-player controls are live. Pause desyncs a match --
+ * MatchController keeps advancing ourTick from real time while the engine is
+ * frozen, so the pauser broadcasts ticks their board never simulated, their
+ * opponent never stalls, and it is free thinking time besides. Restart is
+ * worse: it would fork the simulation onto a fresh, unrelated seed while still
+ * connected and still sending garbage.
+ */
+export function soloControls(
+  phase: MatchPhase,
+  gameStatus: string,
+  restartReady: boolean,
+): { canPause: boolean; canRestart: boolean } {
+  const solo = phase === "solo";
+  return {
+    canPause: solo && gameStatus !== "ready" && gameStatus !== "gameover",
+    canRestart: solo && restartReady,
+  };
 }
 
 /** Settle the match, unless a result is already settled. "over" is terminal. */
@@ -129,6 +185,7 @@ export function reduceMatch(
 export function useMatch(engine: CrackAttackEngine, relayBase: string) {
   const initial: MatchState = {
     phase: "solo", status: null, room: null, link: null, outcome: null,
+    waitingForPeer: false,
   };
   const [state, setState] = useState<MatchState>(initial);
   // The reducer needs the current state synchronously, inside a socket
@@ -157,6 +214,7 @@ export function useMatch(engine: CrackAttackEngine, relayBase: string) {
       room,
       link: challengeUrl(window.location.href, room),
       outcome: null,
+      waitingForPeer: false,
     });
 
     // Decided by play: either our board topped out, or the peer's did. The
@@ -183,8 +241,15 @@ export function useMatch(engine: CrackAttackEngine, relayBase: string) {
   }, [engine, relayBase, commit]);
 
   const clampNow = useCallback((now: number) => {
-    return controllerRef.current ? controllerRef.current.tickTo(now) : now;
-  }, []);
+    const controller = controllerRef.current;
+    if (!controller) return now;
+    const clamped = controller.tickTo(now);
+    // Called once per animation frame, so only commit on an actual edge.
+    if (controller.waitingForPeer !== stateRef.current.waitingForPeer) {
+      commit({ ...stateRef.current, waitingForPeer: controller.waitingForPeer });
+    }
+    return clamped;
+  }, [commit]);
 
   return { ...state, clampNow };
 }

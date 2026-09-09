@@ -34,7 +34,13 @@ import {
   consumeThumbpadMotion,
   horizontalSwipePair,
 } from "./touchControls";
-import { challengeUrl, roomCodeFromLocation, useMatch } from "../net/useMatch.ts";
+import {
+  challengeUrl,
+  matchOverlay,
+  roomCodeFromLocation,
+  soloControls,
+  useMatch,
+} from "../net/useMatch.ts";
 import type { MatchOutcome } from "../net/useMatch.ts";
 
 /**
@@ -545,21 +551,34 @@ export default function CrackAttackGame() {
     return () => window.cancelAnimationFrame(animationFrame);
   }, [engine]);
 
+  const soloOnly = match.phase === "solo";
+
   const startRun = useCallback(() => {
+    // In a match the seed comes from the relay and MatchController.begin()
+    // starts the engine with it. A local start would fork the simulation onto
+    // a fresh, unrelated seed while still connected and still sending garbage,
+    // so every entry point to it -- the ready overlay, the gameover overlay's
+    // restart, and the keyboard -- is gated here rather than one by one.
+    if (!soloOnly) return;
     ensureAudio();
     const now = performance.now();
     const started = engine.start(now, Date.now());
     if (started) setIsNewBest(false);
     canvasRef.current?.focus();
     setSnapshot(engine.getSnapshot(now));
-  }, [engine, ensureAudio]);
+  }, [engine, ensureAudio, soloOnly]);
 
   const pauseRun = useCallback(() => {
+    // MatchController knows nothing about pause: it keeps advancing ourTick
+    // from real time while the engine is frozen, so a pauser broadcasts ticks
+    // their board never simulated, their opponent never stalls, and the pause
+    // is free thinking time on top.
+    if (!soloOnly) return;
     const now = performance.now();
     engine.togglePause(now);
     setSnapshot(engine.getSnapshot(now));
     canvasRef.current?.focus();
-  }, [engine]);
+  }, [engine, soloOnly]);
 
   const createChallenge = useCallback(async () => {
     setChallengeError(null);
@@ -677,6 +696,10 @@ export default function CrackAttackGame() {
 
   useEffect(() => {
     const onVisibility = () => {
+      // Same reason as pauseRun: an auto-pause would desync a live match. A
+      // backgrounded tab in a match is handled by the stall instead, which the
+      // opponent can see.
+      if (!soloOnly) return;
       const now = performance.now();
       const status = engine.getSnapshot(now).status;
       if (document.hidden && (status === "playing" || status === "countdown")) {
@@ -685,7 +708,7 @@ export default function CrackAttackGame() {
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [engine]);
+  }, [engine, soloOnly]);
 
   useEffect(() => {
     const cancelPointer = (event: PointerEvent) => {
@@ -1036,6 +1059,7 @@ export default function CrackAttackGame() {
     }
   };
 
+  const overlay = matchOverlay(match);
   const restartPrompt = gameOverRestartPrompt(
     snapshot.gameOverElapsedMs,
     GAME_OVER_RESTART_DELAY_MS,
@@ -1060,7 +1084,11 @@ export default function CrackAttackGame() {
           <button type="button" onClick={toggleSound}>
             {soundEnabled ? "Sound on" : "Sound off"}
           </button>
-          <button type="button" onClick={pauseRun} disabled={snapshot.status === "ready" || snapshot.status === "gameover"}>
+          <button
+            type="button"
+            onClick={pauseRun}
+            disabled={!soloControls(match.phase, snapshot.status, restartPrompt.ready).canPause}
+          >
             {snapshot.status === "paused" ? "Resume" : "Pause"}
           </button>
           {match.phase === "solo" && (
@@ -1110,7 +1138,7 @@ export default function CrackAttackGame() {
                 type="button"
                 className="original-screen-action"
                 onClick={startRun}
-                disabled={!restartPrompt.ready}
+                disabled={!soloControls(match.phase, snapshot.status, restartPrompt.ready).canRestart}
               >
                 <span className="game-over-summary">
                   {isNewBest && <strong>New best</strong>}
@@ -1125,7 +1153,7 @@ export default function CrackAttackGame() {
             </div>
           )}
 
-          {match.phase === "waiting" && (
+          {overlay === "waiting" && (
             <div className="game-overlay">
               <p>Waiting for your opponent…</p>
               {match.status === "reconnecting" && (
@@ -1139,20 +1167,29 @@ export default function CrackAttackGame() {
             </div>
           )}
 
-          {match.status === "reconnecting" && match.phase === "playing" && (
+          {overlay === "reconnecting" && (
             <div className="game-overlay game-overlay--passthrough">
               <p>Connection lost — reconnecting…</p>
             </div>
           )}
 
-          {match.phase === "peer-gone" && (
+          {overlay === "waiting-peer" && (
+            <div className="game-overlay game-overlay--passthrough">
+              <p>Waiting for your opponent&rsquo;s game…</p>
+              <p className="overlay-note">
+                Your board is held still so you can&rsquo;t run ahead of them.
+              </p>
+            </div>
+          )}
+
+          {overlay === "peer-gone" && (
             <div className="game-overlay game-overlay--passthrough">
               <p>Your opponent dropped out.</p>
               <p className="overlay-note">Waiting 30 seconds for them to come back…</p>
             </div>
           )}
 
-          {match.phase === "over" && (
+          {overlay === "over" && (
             <div className="game-overlay">
               <p>{matchOverCopy(match.outcome)}</p>
               <button type="button" className="overlay-action" onClick={playAgain}>
