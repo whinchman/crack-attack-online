@@ -1716,66 +1716,113 @@ git commit -m "feat(ui): challenge links, waiting screen and match wiring"
 ```
 
 ---
-
 ## Task 9: Deploy and play a real match
 
-**Files:**
-- Create: `.github/workflows/pages.yml` (modify existing), `README.md` (modify)
+> Rewritten after the whole-branch review. The original version would have deployed a
+> broken-but-green site: it created `.env.production` where Vite never looks, pushed to
+> main and published a second site pointing at a bogus URL, and ran a happy-path smoke
+> test that could not detect any of the three worst bugs. Every step below exists because
+> something went wrong without it.
 
-**Interfaces:**
-- Consumes: everything above.
-- Produces: a live URL and a deployed relay.
+**This task is run by the owner, not by an agent.** It needs Cloudflare credentials and it
+publishes to the public internet.
 
-- [ ] **Step 1: Deploy the relay**
+### Step 1 — Deploy the relay
 
 ```bash
 cd relay
-npx wrangler login
+npm ci                    # not `npx wrangler` cold: use the pinned version
+npx wrangler login        # interactive, opens a browser
 npx wrangler deploy
 ```
 
-Record the deployed `workers.dev` hostname. Expected output includes `https://crack-attack-relay.<subdomain>.workers.dev`.
+Record the deployed hostname. It looks like
+`crack-attack-relay.<your-subdomain>.workers.dev`, **not** `crack-attack-relay.workers.dev`.
 
-- [ ] **Step 2: Point the client at it**
+`wrangler.toml` declares `new_sqlite_classes = ["Room"]`. This is a **first-deploy-only,
+irreversible** choice: a Durable Object class cannot be migrated between storage backends
+afterwards. SQLite-backed objects work on both the free and paid plans, so this is correct
+either way — but if it ever needs changing, the only route is a redeploy under a new class
+name.
 
-Create `.env.production` in the repo root:
-
-```
-VITE_RELAY_BASE=wss://crack-attack-relay.<subdomain>.workers.dev
-```
-
-- [ ] **Step 3: Build and deploy the client to Cloudflare Pages**
+### Step 2 — Verify the relay from the terminal, before the client depends on it
 
 ```bash
+curl https://crack-attack-relay.<sub>.workers.dev/new
+# expect: {"room":"XXXXXX"}
+
+curl -i -H "Origin: https://example.com" https://crack-attack-relay.<sub>.workers.dev/new | grep -i access-control
+# expect: access-control-allow-origin: *
+```
+
+Thirty seconds, and it catches a missing CORS header or a failed Durable Object migration
+at the terminal instead of through a phone.
+
+### Step 3 — Point the client at it and confirm the URL actually got baked in
+
+```bash
+cd ..
+echo 'VITE_RELAY_BASE=wss://crack-attack-relay.<sub>.workers.dev' > .env.production
 npm run build
+npm run validate
+
+grep -o 'wss://[^"]*' dist-pages/assets/*.js | head
+```
+
+That grep is **not optional**. It is the only check anywhere in the pipeline that catches a
+silently-missing env var. If it prints `wss://relay-not-configured.invalid`, the env var did
+not reach the build and deploying now would ship a site that cannot connect.
+
+(`vite.pages.config.ts` sets `envDir: projectRoot`, so the repo-root `.env.production` is
+read. `.gitignore` covers `.env*`, so it correctly stays local.)
+
+### Step 4 — Deploy the site
+
+```bash
 npx wrangler pages deploy dist-pages --project-name crack-attack
 ```
 
-- [ ] **Step 4: Two-browser smoke test**
+Decide now which URL is canonical. The GitHub Pages workflow publishes only when the
+`VITE_RELAY_BASE` repository variable is set, so it stays dormant by default — but if you
+want it live, set that variable in the repo settings and make sure `README.md` names the
+same URL you actually share.
 
-Open the deployed URL, click "Create challenge", copy the link, open it in a second browser (or a phone). Verify:
-- Both boards start with an identical block layout (proves the shared seed reached both peers).
-- Clearing blocks on one side sends garbage to the other.
-- The opponent light column tracks the other player's stack height.
-- Closing one tab shows the "opponent dropped" banner on the other; reopening the link within 30 s resumes.
+### Step 5 — Smoke test, adversarially
 
-- [ ] **Step 5: Verify the live-only room rule**
+A scripted happy path proves almost nothing. Each check below targets a bug that reached
+the final review.
 
-Create a challenge link, close the host tab without anyone joining, then open the link. Expected: an error state, not a hung waiting screen.
+Open the site, click **Challenge a friend**, and send the link to a second browser (or a
+phone).
 
-- [ ] **Step 6: Update the README**
+1. **Same board.** Both players must see an identical starting layout. Different layouts
+   mean the shared seed did not arrive.
+2. **Garbage is telegraphed.** Clear blocks on one side and *time* how long until the
+   garbage lands on the other. It must be roughly **5.7 seconds**, with the incoming counter
+   visible. Instant arrival means the attack time base regressed.
+3. **A backgrounded tab recovers.** Switch away from one browser for 5 seconds, then return.
+   Both boards must still be running. A permanent freeze on both sides is the stall deadlock.
+4. **Someone can win by playing.** Play until one player tops out. The *other* player must
+   see "You win! Your opponent topped out." — not a solo game-over card, and not nothing.
+5. **Wifi drop resumes.** Disable wifi on one device for 10 seconds, re-enable. The match
+   should resume. This is the path that works.
+6. **Closing the tab does not.** Close one tab entirely and re-open the link. Expect "This
+   challenge link has expired" for the returner and a forfeit win for the other player
+   within 30 seconds. This is a *defined* outcome, not a resume — a closed tab cannot
+   resume, because board state is never transferred.
+7. **A dead link fails cleanly.** Create a challenge, close the host tab without anyone
+   joining, then open the link. Expect a clear expiry message, not a hung waiting screen.
 
-Replace the upstream README's solo-only description with the challenge-link flow, the relay deployment steps, and a note that the fork adds multiplayer.
+Checks 5 and 6 are different paths through the relay and are easy to conflate. Run both.
 
-- [ ] **Step 7: Commit and push**
+### Step 6 — Push
 
 ```bash
-git add -A
-git commit -m "docs: deployment and multiplayer instructions"
-git push -u origin main
+git push -u origin multiplayer
 ```
 
----
+Open a PR or merge to main as you prefer. Nothing is published from a push unless the
+`VITE_RELAY_BASE` repository variable is set.
 
 ## Deferred (explicitly out of scope)
 
