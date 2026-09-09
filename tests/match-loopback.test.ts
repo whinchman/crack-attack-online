@@ -272,3 +272,94 @@ test("a multi-second clock jump on one side does not deadlock the match", () => 
     `garbage arrived with only ${telegraphOnArrivalMs}ms of warning, expected >= 5000ms`,
   );
 });
+
+/**
+ * The review's own deadlock scenario, which a continuous skew cannot reach.
+ *
+ * A gradient only ever stalls the FASTER peer: the slower one is by definition
+ * never ahead of anyone. F1's deadlock needs BOTH peers stalled at once, and
+ * that state is reached by a discontinuity. A's tab goes to the background, so
+ * rAF stops calling tickTo while A's real clock keeps running. B advances past
+ * A's last report and stalls, emitting nothing. A returns, computes an ourTick
+ * far beyond B's last report, and stalls too. Neither side's condition can now
+ * be satisfied by the other, because satisfying it requires a sync neither is
+ * still sending.
+ *
+ * Note A keeps RECEIVING throughout: a hidden tab's socket still delivers, it
+ * is only the animation frame that stops. The deadlock does not depend on A
+ * going deaf -- it forms because B falls silent once B itself stalls.
+ */
+test("a suspended tab that wakes far ahead does not deadlock both boards", () => {
+  const { engineA, engineB, matchA, matchB, transportA, transportB } = makePair(13);
+
+  const dt = 20;
+  const SUSPEND_MS = 4_000;
+  const suspendFromRound = 200;
+  const resumeRound = suspendFromRound + SUSPEND_MS / dt;
+  const rounds = 700;
+
+  const valuesA: number[] = [];
+  const valuesB: number[] = [];
+  let mutualStallSeen = false;
+  let bothRecoveredAtRound: number | null = null;
+  let syncsFromAAfterResume = 0;
+  let syncsFromBAfterResume = 0;
+
+  for (let i = 1; i <= rounds; i += 1) {
+    // Not a slow clock: tickTo is not called for A at all across this window,
+    // while A's real clock runs on and arrives all at once on resume.
+    const suspended = i > suspendFromRound && i < resumeRound;
+    const nowA = START_A + i * dt;
+    const nowB = START_B + i * dt;
+
+    if (!suspended) {
+      const clampedA = matchA.tickTo(nowA);
+      valuesA.push(clampedA);
+      engineA.update(clampedA);
+    }
+    const clampedB = matchB.tickTo(nowB);
+    valuesB.push(clampedB);
+    engineB.update(clampedB);
+
+    // Sampled before this round's deliveries: onSync clears waitingForPeer
+    // unconditionally and the next tickTo re-raises it, so sampling after
+    // delivery would report a recovery that has not happened.
+    if (!suspended) {
+      if (matchA.waitingForPeer && matchB.waitingForPeer) mutualStallSeen = true;
+      else if (mutualStallSeen && !matchA.waitingForPeer && !matchB.waitingForPeer) {
+        bothRecoveredAtRound ??= i;
+      }
+    }
+
+    const toA = transportB.drain();
+    const toB = transportA.drain();
+    if (i >= resumeRound) {
+      syncsFromAAfterResume += toB.length;
+      syncsFromBAfterResume += toA.length;
+    }
+    for (const message of toA) matchA.onSync(message as SyncMessage);
+    for (const message of toB) matchB.onSync(message as SyncMessage);
+  }
+
+  // The scenario itself. If this ever stops holding, everything below is
+  // asserting nothing and the suspension window needs widening until it does.
+  assert.ok(
+    mutualStallSeen,
+    "test setup: both peers must be stalled at the same time, or this is not the deadlock",
+  );
+
+  // Recovery: neither side still waiting, both talking again, and neither
+  // simulated clock ever ran backwards -- resume included.
+  assert.ok(
+    bothRecoveredAtRound !== null,
+    "the match never recovered: both peers stalled and neither could resolve",
+  );
+  assert.ok(syncsFromAAfterResume > 0, "the woken peer never transmitted again");
+  assert.ok(syncsFromBAfterResume > 0, "the peer that stalled waiting never transmitted again");
+  for (let i = 1; i < valuesA.length; i += 1) {
+    assert.ok(valuesA[i] >= valuesA[i - 1], `A went backwards: ${valuesA[i - 1]} -> ${valuesA[i]}`);
+  }
+  for (let i = 1; i < valuesB.length; i += 1) {
+    assert.ok(valuesB[i] >= valuesB[i - 1], `B went backwards: ${valuesB[i - 1]} -> ${valuesB[i]}`);
+  }
+});
