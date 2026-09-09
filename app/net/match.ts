@@ -30,6 +30,8 @@ export class MatchController {
   private stalledMs = 0;
   private stallBeganAt: number | null = null;
   private lastSyncedTick = 0;
+  /** Real (not simulated) time of our last transmission, for the stall heartbeat. */
+  private lastSyncSentAtMs = 0;
 
   constructor(engine: CrackAttackEngine, transport: Transport) {
     this.engine = engine;
@@ -43,6 +45,7 @@ export class MatchController {
     this.stalledMs = 0;
     this.stallBeganAt = null;
     this.lastSyncedTick = 0;
+    this.lastSyncSentAtMs = nowMs;
     this.peerTick = 0;
     this.waitingForPeer = false;
     this.engine.start(nowMs, start.seed);
@@ -67,7 +70,21 @@ export class MatchController {
     if (ourTick > this.peerTick + MAX_LEAD_TICKS) {
       if (this.stallBeganAt === null) this.stallBeganAt = nowMs;
       this.waitingForPeer = true;
-      return nowMs - this.stalledMs;
+      const stalledClamp = nowMs - this.stalledMs;
+      // Stall SIMULATION, not COMMUNICATION -- the original C++ Communicator
+      // blocks the game loop but keeps talking. Returning here without
+      // transmitting deadlocks: a phone that locks for a few seconds makes its
+      // peer stall, the peer then goes silent, and on waking the first phone
+      // stalls too. Neither side's peerTick can ever advance again and both
+      // boards freeze permanently, with no overlay and no recovery but reload.
+      // The heartbeat reports our frozen tick, which is where our engine
+      // genuinely is; sending a stale lastSyncedTick would understate our
+      // position and leave the peer stalled against a number that never moves.
+      if (nowMs - this.lastSyncSentAtMs >= SYNC_PERIOD_TICKS * TICK_MS) {
+        this.emitSync(Math.floor((stalledClamp - this.startedAtMs) / TICK_MS), stalledClamp);
+        this.lastSyncSentAtMs = nowMs;
+      }
+      return stalledClamp;
     }
 
     this.stallBeganAt = null;
@@ -78,6 +95,7 @@ export class MatchController {
     if (reachedTick - this.lastSyncedTick >= SYNC_PERIOD_TICKS) {
       this.lastSyncedTick = reachedTick - (reachedTick % SYNC_PERIOD_TICKS);
       this.emitSync(this.lastSyncedTick, clamped);
+      this.lastSyncSentAtMs = nowMs;
     }
     return clamped;
   }
@@ -112,7 +130,13 @@ export class MatchController {
         width: attack.width,
         flavor: attack.flavor,
         source: "clear",
-        createdAt: attack.tick * TICK_MS,
+        // The engine's clock is absolute -- engine.start() is handed a raw
+        // performance.now() -- but the wire carries elapsed MATCH ticks, so
+        // the peer's tick has to be rebased onto our own start time. Without
+        // the offset, dropAt lands in the distant past for any realistic
+        // startedAtMs and every remote attack drops on the very next update,
+        // destroying the ~5.7s telegraph that is the core of the game feel.
+        createdAt: this.startedAtMs + attack.tick * TICK_MS,
       });
     }
   }

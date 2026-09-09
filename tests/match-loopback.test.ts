@@ -27,6 +27,16 @@ class LoopbackTransport {
   }
 }
 
+/**
+ * Two browsers never share a performance.now() origin, and neither one starts
+ * at zero. Starting both at 0 made elapsed match ticks and absolute engine
+ * time numerically identical, which hid a time-base bug in onSync for two
+ * whole tasks (see the FINAL-2 regression in tests/match.test.ts). These start
+ * times are deliberately unequal and deliberately non-zero.
+ */
+const START_A = 41_000;
+const START_B = 137_500;
+
 function makePair(seed: number) {
   const engineA = new CrackAttackEngine({ seed, multiplayer: true });
   const engineB = new CrackAttackEngine({ seed, multiplayer: true });
@@ -34,8 +44,8 @@ function makePair(seed: number) {
   const transportB = new LoopbackTransport();
   const matchA = new MatchController(engineA, transportA as never);
   const matchB = new MatchController(engineB, transportB as never);
-  matchA.begin({ seed, role: "host" }, 0);
-  matchB.begin({ seed, role: "guest" }, 0);
+  matchA.begin({ seed, role: "host" }, START_A);
+  matchB.begin({ seed, role: "guest" }, START_B);
   return { engineA, engineB, matchA, matchB, transportA, transportB };
 }
 
@@ -50,6 +60,7 @@ test("two controllers stay fair and consistent over a long, skewed run", () => {
   let stalledSeenA = false;
   let syncsDeliveredWhileAWasStalled = 0;
   let attackDelivered = false;
+  let telegraphOnArrivalMs: number | null = null;
   // The frozen-on-entry stall (see tickTo's comment) can overshoot the lead
   // bound by up to one call's worth of ticks before it takes hold -- bounded
   // by how coarse dtA is relative to TICK_MS, not by anything unbounded.
@@ -65,8 +76,8 @@ test("two controllers stay fair and consistent over a long, skewed run", () => {
   const dtB = 20;
 
   for (let i = 1; i <= rounds; i += 1) {
-    const nowA = i * dtA;
-    const nowB = i * dtB;
+    const nowA = START_A + i * dtA;
+    const nowB = START_B + i * dtB;
 
     const clampedA = matchA.tickTo(nowA);
     const clampedB = matchB.tickTo(nowB);
@@ -76,8 +87,13 @@ test("two controllers stay fair and consistent over a long, skewed run", () => {
     engineB.update(clampedB);
 
     if (matchA.waitingForPeer) stalledSeenA = true;
-    maxOverA = Math.max(maxOverA, Math.floor(clampedA / TICK_MS) - (matchA.peerTick + MAX_LEAD_TICKS));
-    maxOverB = Math.max(maxOverB, Math.floor(clampedB / TICK_MS) - (matchB.peerTick + MAX_LEAD_TICKS));
+    // tickTo returns absolute time, so the match tick is measured from each
+    // side's own start. This used to read Math.floor(clamped / TICK_MS),
+    // which was only correct because both matches began at 0.
+    const tickA = Math.floor((clampedA - START_A) / TICK_MS);
+    const tickB = Math.floor((clampedB - START_B) / TICK_MS);
+    maxOverA = Math.max(maxOverA, tickA - (matchA.peerTick + MAX_LEAD_TICKS));
+    maxOverB = Math.max(maxOverB, tickB - (matchB.peerTick + MAX_LEAD_TICKS));
 
     // Deliver this round's traffic. Queued, not synchronous with send().
     const toA = transportB.drain();
@@ -90,7 +106,11 @@ test("two controllers stay fair and consistent over a long, skewed run", () => {
     for (const message of toB) {
       const before = engineB.getSnapshot(nowB).incomingCount;
       matchB.onSync(message as SyncMessage);
-      if (engineB.getSnapshot(nowB).incomingCount > before) attackDelivered = true;
+      const after = engineB.getSnapshot(nowB);
+      if (after.incomingCount > before) {
+        attackDelivered = true;
+        telegraphOnArrivalMs ??= after.nextIncomingMs;
+      }
     }
   }
 
@@ -115,6 +135,15 @@ test("two controllers stay fair and consistent over a long, skewed run", () => {
   assert.ok(maxOverA <= overshootTolerance, `A exceeded its lead budget by ${maxOverA} ticks`);
   assert.ok(maxOverB <= overshootTolerance, `B exceeded its lead budget by ${maxOverB} ticks`);
 
-  // 5. An attack queued on one side is eventually delivered to the other.
+  // 5. An attack queued on one side is eventually delivered to the other --
+  // and lands with its telegraph intact. Asserting only that incomingCount
+  // rose is exactly what let FINAL-2 through for two tasks: an attack that
+  // drops on the very next update still "arrives". The engine spreads garbage
+  // over 281..320 ticks (5.62s..6.4s), so anything materially under 5s means
+  // the drop time was computed against the wrong time base.
   assert.ok(attackDelivered, "the queued attack never reached the peer's incoming queue");
+  assert.ok(
+    telegraphOnArrivalMs !== null && telegraphOnArrivalMs >= 5_000,
+    `remote attack arrived with only ${telegraphOnArrivalMs}ms of warning, expected >= 5000ms`,
+  );
 });
