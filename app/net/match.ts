@@ -143,6 +143,17 @@ export class MatchController {
   }
 
   /**
+   * Real time converted to the clock the engine has actually been fed, with no
+   * side effects. Callers that end the game outside the tick loop need this:
+   * handing the engine a raw performance.now() would jump its clock forward by
+   * however much stall time has accumulated, and freeze the game-over
+   * animation until real time caught up.
+   */
+  engineTime(nowMs: number): number {
+    return nowMs - this.stalledMs;
+  }
+
+  /**
    * Stop driving the match. Called once the result is settled, by any route,
    * so we neither keep transmitting nor report a second outcome.
    */

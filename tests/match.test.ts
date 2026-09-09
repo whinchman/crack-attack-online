@@ -289,3 +289,16 @@ test("end() stops the controller transmitting", () => {
   assert.equal(transport.sent.length, 0, "a settled match kept talking");
   assert.equal(match.waitingForPeer, false, "a settled match should not stall");
 });
+
+test("engineTime converts real time to the clock the engine was actually fed", () => {
+  const { engine, match } = makeMatch();
+  let last = 0;
+  for (let ms = TICK_MS; ms <= PERIOD_MS * 3; ms += TICK_MS) {
+    last = match.tickTo(ms);
+    engine.update(last);
+  }
+  assert.equal(match.waitingForPeer, true, "setup: should have stalled and banked stall time");
+  const real = PERIOD_MS * 3;
+  assert.ok(match.engineTime(real) < real, "stall time must be subtracted");
+  assert.equal(match.engineTime(real), last, "must match what the engine was last given");
+});

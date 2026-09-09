@@ -238,7 +238,7 @@ export function useMatch(engine: CrackAttackEngine, relayBase: string) {
     // wire; the win/lose narrative belongs here, not in the engine.
     controller.onOutcome = (outcome) => {
       controller.end();
-      if (outcome === "win") engine.forfeitWin(performance.now());
+      if (outcome === "win") engine.forfeitWin(controller.engineTime(performance.now()));
       transport.close();
       commit(settleMatch(stateRef.current, outcome));
     };
@@ -257,7 +257,7 @@ export function useMatch(engine: CrackAttackEngine, relayBase: string) {
         controller.begin(effects.begin, performance.now());
       }
       if (effects.sync) controller.onSync(effects.sync);
-      if (effects.winLocally) engine.forfeitWin(performance.now());
+      if (effects.winLocally) engine.forfeitWin(controller.engineTime(performance.now()));
       if (effects.closeTransport) transport.close();
       commit(next);
     });
