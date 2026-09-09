@@ -19,8 +19,8 @@ export function swapMotionTransform(
   };
 }
 
-const LEVEL_LIGHT_BLUE: Color3 = [0.08, 0.1, 1];
-const LEVEL_LIGHT_RED: Color3 = [1, 0.025, 0.055];
+export const LEVEL_LIGHT_BLUE: Color3 = [0.08, 0.1, 1];
+export const LEVEL_LIGHT_RED: Color3 = [1, 0.025, 0.055];
 const LEVEL_LIGHT_WHITE: Color3 = [1, 1, 1];
 // These are the original material colors. The light/specular profile below
 // supplies the pale highlight seen across the upper third of the bar.

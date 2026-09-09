@@ -43,6 +43,8 @@ import {
   garbageShatterVisual,
   levelLightColor,
   levelLightScreenY,
+  LEVEL_LIGHT_BLUE,
+  LEVEL_LIGHT_RED,
   loseBarToneAt,
   loseBarVisual,
   messagePulseAlpha,
@@ -935,10 +937,11 @@ export function drawOpponentLights(
   const lampWidth = 14;
   const lampHeight = Math.floor(CELL_SIZE * 0.5);
   const x = BOARD_X + BOARD_WIDTH + 18;
+  const redColor = colorToCss(LEVEL_LIGHT_RED);
+  const blueColor = colorToCss(LEVEL_LIGHT_BLUE);
   for (let row = 0; row < VISIBLE_ROWS; row += 1) {
-    if ((bits & (1 << row)) === 0) continue;
-    const danger = row >= VISIBLE_ROWS - 3;
-    context.fillStyle = danger ? "#FF0000" : "#3333CC";
+    const isOccupied = (bits & (1 << row)) !== 0;
+    context.fillStyle = isOccupied ? redColor : blueColor;
     const y = BOARD_BOTTOM - (row + 1) * CELL_SIZE + (CELL_SIZE - lampHeight) / 2;
     context.fillRect(x, y, lampWidth, lampHeight);
   }
