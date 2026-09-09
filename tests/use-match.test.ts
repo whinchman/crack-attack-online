@@ -11,6 +11,7 @@ import {
   settleMatch,
   soloControls,
 } from "../app/net/useMatch.ts";
+import type { MatchWiring } from "../app/net/useMatch.ts";
 import { CrackAttackEngine } from "../app/game/engine.ts";
 import { MatchController } from "../app/net/match.ts";
 import { STATE_LOST, SYNC_PERIOD_TICKS } from "../app/net/protocol.ts";
@@ -194,6 +195,8 @@ function makeWiring(phase: MatchPhase = "playing") {
   const engine = new CrackAttackEngine({ seed: 7, multiplayer: true });
   const transport = {
     closed: false,
+    sent: [] as unknown[],
+    send(m: unknown) { this.sent.push(m); },
     close() {
       this.closed = true;
       commit({ ...state, status: "closed" });
@@ -235,10 +238,11 @@ test("the played win stops the controller and closes the socket", () => {
   const rig = makeWiring();
   handleServerMessage(rig.wiring, lostSync(SYNC_PERIOD_TICKS));
   assert.equal(rig.transport.closed, true);
-  // A settled controller must stop ticking. The fake transport has no send()
-  // at all, so if end() had not taken hold, the next period boundary would
-  // reach emitSync and throw rather than return a clock value.
-  assert.equal(rig.controller.tickTo(80_000), rig.controller.engineTime(80_000));
+  // On THIS path onOutcome runs, so end() genuinely is what stops the
+  // controller: no further syncs, and no stalling on a decided match.
+  rig.transport.sent.length = 0;
+  for (let ms = 50_000; ms <= 62_000; ms += 20) rig.controller.tickTo(ms);
+  assert.deepEqual(rig.transport.sent, [], "a settled match kept transmitting");
   assert.equal(rig.controller.waitingForPeer, false, "a settled match should not stall");
 });
 
@@ -295,4 +299,42 @@ test("a settled match cannot be reopened through the handler", () => {
   handleServerMessage(rig.wiring, { t: "error", reason: "missing" });
   assert.equal(rig.state.phase, "over");
   assert.equal(rig.state.outcome, "win", "the win screen was relabelled after the fact");
+});
+
+test("a start message begins the controller exactly once", () => {
+  // The state is re-derived by a SECOND reduceMatch call, whose effects must be
+  // discarded. Running them as well would call controller.begin() twice and
+  // reset the match clock on the second pass.
+  const rig = makeWiring("waiting");
+  let begins = 0;
+  const counting: MatchWiring = {
+    ...rig.wiring,
+    begin: (start) => { begins += 1; rig.wiring.begin(start); },
+  };
+  handleServerMessage(counting, { t: "start", seed: 4242, role: "guest" });
+  assert.equal(begins, 1, "the re-reduce re-ran the effects");
+});
+
+// The forfeit path is handled ENTIRELY through reduceMatch's effects, none of
+// which touch the controller -- onOutcome never runs, so MatchController.end()
+// is never called. The controller therefore keeps ticking with an engine that
+// forfeitWin() has already put in "gameover", and its next periodic emitSync
+// genuinely does read that as a loss and call reportOutcome("loss"). What holds
+// the result is settleMatch's "over" terminality, NOT anything in
+// MatchController. This test exists because the fix-wave report claimed
+// otherwise, and the next person to touch settleMatch would believe a guard
+// exists in the controller that does not.
+test("a forfeit win survives the controller's own later loss report", () => {
+  const rig = makeWiring();
+  handleServerMessage(rig.wiring, { t: "forfeit" });
+  assert.equal(rig.state.outcome, "forfeit");
+
+  const lostSyncs = () => rig.transport.sent.filter(
+    (m) => (m as SyncMessage).state === STATE_LOST,
+  ).length;
+  for (let ms = 50_000; ms <= 62_000; ms += 20) rig.controller.tickTo(ms);
+
+  assert.ok(lostSyncs() > 0, "setup: the controller should have reported its own loss");
+  assert.equal(rig.state.phase, "over");
+  assert.equal(rig.state.outcome, "forfeit", "a stray loss report relabelled a forfeit win");
 });

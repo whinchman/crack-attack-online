@@ -156,13 +156,6 @@ export interface MatchEffects {
    */
   winLocally: boolean;
   /**
-   * Stop the controller. A settled match must not go on ticking: it would keep
-   * stalling, keep transmitting into a socket that is about to close, and --
-   * because the forfeit winner's own engine is now "gameover" -- emitSync
-   * would read that as a loss and try to invert the result.
-   */
-  endMatch: boolean;
-  /**
    * Close our end of the socket. The relay closes its end straight after any
    * terminal message; without this, Transport reads that as an unexpected drop
    * and reconnects once a second forever, draining the phone and replacing the
@@ -172,11 +165,11 @@ export interface MatchEffects {
 }
 
 const NO_EFFECTS: MatchEffects = {
-  begin: null, sync: null, winLocally: false, endMatch: false, closeTransport: false,
+  begin: null, sync: null, winLocally: false, closeTransport: false,
 };
 
 /** Effects for a message that ends the match, whatever the state it lands in. */
-const TERMINAL: MatchEffects = { ...NO_EFFECTS, endMatch: true, closeTransport: true };
+const TERMINAL: MatchEffects = { ...NO_EFFECTS, closeTransport: true };
 
 /**
  * Fold a server message into the match state. Pure: the caller performs the
@@ -231,7 +224,6 @@ export interface MatchWiring {
   begin(start: MatchStart): void;
   applySync(sync: SyncMessage): void;
   winLocally(): void;
-  endMatch(): void;
   closeTransport(): void;
 }
 
@@ -257,7 +249,6 @@ export function handleServerMessage(wiring: MatchWiring, message: ServerMessage)
   if (effects.begin) wiring.begin(effects.begin);
   if (effects.sync) wiring.applySync(effects.sync);
   if (effects.winLocally) wiring.winLocally();
-  if (effects.endMatch) wiring.endMatch();
   if (effects.closeTransport) wiring.closeTransport();
   wiring.commit(reduceMatch(wiring.getState(), message).state);
 }
@@ -286,7 +277,6 @@ export function liveWiring(options: {
     },
     applySync: (sync) => controller.onSync(sync),
     winLocally: () => engine.forfeitWin(controller.engineTime(now())),
-    endMatch: () => controller.end(),
     closeTransport: () => transport.close(),
   };
 }
