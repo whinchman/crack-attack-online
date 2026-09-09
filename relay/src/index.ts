@@ -17,7 +17,15 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/new") {
-      return Response.json({ room: mintCode() });
+      // The client is served from a different origin (Pages) than this Worker,
+      // so without this header the browser refuses to let the page read the
+      // response and hosting a challenge fails every time. A plain GET with no
+      // custom headers is a CORS "simple request", so there is no preflight to
+      // answer -- the response header alone is enough. WebSocket upgrades are
+      // not subject to CORS at all, which is why /room/* needs nothing here.
+      return Response.json({ room: mintCode() }, {
+        headers: { "Access-Control-Allow-Origin": "*" },
+      });
     }
 
     const match = url.pathname.match(/^\/room\/([A-Z2-9]{6})$/);
