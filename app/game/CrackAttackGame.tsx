@@ -39,6 +39,7 @@ import {
   matchOverCopy,
   matchOverlay,
   roomCodeFromLocation,
+  showSoloGameOverCard,
   soloControls,
   useMatch,
 } from "../net/useMatch.ts";
@@ -1127,7 +1128,7 @@ export default function CrackAttackGame() {
             </div>
           )}
 
-          {snapshot.status === "gameover" && (
+          {showSoloGameOverCard(snapshot.status, overlay) && (
             <div className="game-overlay">
               <button
                 type="button"

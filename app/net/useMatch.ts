@@ -96,6 +96,18 @@ export function matchOverlay(state: MatchState): MatchOverlay {
 }
 
 /**
+ * Whether the solo score card should render. It and the match-result overlay
+ * are both `.game-overlay` at `inset: 0; z-index: 5` with no padding or
+ * centring of their own, so rendering both puts two siblings in the same box.
+ * It reads cramped rather than broken, and before the played-win outcome
+ * existed only a forfeit reached it -- but that is now how every match ends,
+ * so the match result gets the frame to itself.
+ */
+export function showSoloGameOverCard(gameStatus: string, overlay: MatchOverlay): boolean {
+  return gameStatus === "gameover" && overlay !== "over";
+}
+
+/**
  * Whether the single-player controls are live. Pause desyncs a match --
  * MatchController keeps advancing ourTick from real time while the engine is
  * frozen, so the pauser broadcasts ticks their board never simulated, their

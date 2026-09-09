@@ -9,6 +9,7 @@ import {
   reduceMatch,
   roomCodeFromLocation,
   settleMatch,
+  showSoloGameOverCard,
   soloControls,
 } from "../app/net/useMatch.ts";
 import type { MatchWiring } from "../app/net/useMatch.ts";
@@ -337,4 +338,15 @@ test("a forfeit win survives the controller's own later loss report", () => {
   assert.ok(lostSyncs() > 0, "setup: the controller should have reported its own loss");
   assert.equal(rig.state.phase, "over");
   assert.equal(rig.state.outcome, "forfeit", "a stray loss report relabelled a forfeit win");
+});
+
+test("the match result gets the frame to itself at the end of a match", () => {
+  // Two .game-overlay siblings at inset:0 with no padding of their own render
+  // into the same box. Before a played win existed only a forfeit reached this
+  // combination; it is now how every match ends.
+  assert.equal(showSoloGameOverCard("gameover", "over"), false);
+  // Solo play must still get its score card, and a match still in progress
+  // must still show one if the local board is somehow already finished.
+  assert.equal(showSoloGameOverCard("gameover", "none"), true);
+  assert.equal(showSoloGameOverCard("playing", "over"), false);
 });
