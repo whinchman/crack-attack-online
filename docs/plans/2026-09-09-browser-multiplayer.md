@@ -1525,16 +1525,23 @@ export function challengeUrl(href: string, room: string): string {
 
 export type MatchPhase = "solo" | "waiting" | "playing" | "peer-gone" | "over";
 
+export type MatchOutcome = "forfeit" | "ended" | null;
+
 export interface MatchState {
   phase: MatchPhase;
   status: TransportStatus | null;
   room: string | null;
   link: string | null;
+  /**
+   * Why the match ended. The engine has no winner concept — `forfeitWin()`
+   * only stops the simulation — so the outcome narrative lives here.
+   */
+  outcome: MatchOutcome;
 }
 
 export function useMatch(engine: CrackAttackEngine, relayBase: string) {
   const [state, setState] = useState<MatchState>({
-    phase: "solo", status: null, room: null, link: null,
+    phase: "solo", status: null, room: null, link: null, outcome: null,
   });
   const controllerRef = useRef<MatchController | null>(null);
 
@@ -1551,6 +1558,7 @@ export function useMatch(engine: CrackAttackEngine, relayBase: string) {
       status: "connecting",
       room,
       link: challengeUrl(window.location.href, room),
+      outcome: null,
     });
 
     transport.onStatus((status) => setState((s) => ({ ...s, status })));
@@ -1571,10 +1579,10 @@ export function useMatch(engine: CrackAttackEngine, relayBase: string) {
           break;
         case "forfeit":
           engine.forfeitWin(performance.now());
-          setState((s) => ({ ...s, phase: "over" }));
+          setState((s) => ({ ...s, phase: "over", outcome: "forfeit" }));
           break;
         case "error":
-          setState((s) => ({ ...s, phase: "over" }));
+          setState((s) => ({ ...s, phase: "over", outcome: "ended" }));
           break;
       }
     });
@@ -1656,6 +1664,15 @@ Add the overlays. Reuse the existing `game-overlay` class the component already 
   <div className="game-overlay">
     <p>Your opponent dropped out.</p>
     <p className="keyboard-hint">Waiting 30 seconds for them to come back…</p>
+  </div>
+)}
+
+{match.phase === "over" && (
+  <div className="game-overlay">
+    <p>{match.outcome === "forfeit"
+      ? "Your opponent didn't come back. You win."
+      : "Match over."}</p>
+    <p className="keyboard-hint">Create a new challenge link to play again.</p>
   </div>
 )}
 
