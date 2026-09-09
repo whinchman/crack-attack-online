@@ -113,6 +113,8 @@ canvas:focus-visible {
 
 .port-actions {
   gap: 8px !important;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .port-actions button {
@@ -193,6 +195,36 @@ canvas:focus-visible {
   cursor: pointer;
 }
 
+/*
+ * A normal, small, named button for overlay content that sits alongside
+ * other text (Copy challenge link, Play again) — NOT `.original-screen-action`,
+ * whose width/height: 100% is only correct for a lone full-frame tap target
+ * (Start/Resume) and otherwise pushes any later sibling below the visible,
+ * clipped .game-frame box.
+ */
+.overlay-action {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 10px;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(11, 14, 28, 0.78);
+  color: #ffffff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.overlay-action:hover {
+  border-color: rgba(154, 167, 255, 0.58);
+}
+
 .original-screen-action:disabled {
   cursor: default;
   opacity: 1;
@@ -256,6 +288,28 @@ canvas:focus-visible {
 }
 
 .keyboard-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 12px 0 0;
+  padding: 0;
+  color: #7781aa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+}
+
+/*
+ * Same look as .keyboard-hint's base rule, but for secondary text that must
+ * stay visible on touch devices. .keyboard-hint itself is deliberately
+ * hidden under `any-pointer: coarse` and `[data-touch-controls="true"]`
+ * (below) because it documents keyboard shortcuts a touch player has no use
+ * for — this class is for everyone else's fine print (challenge errors,
+ * match-status asides) and must not be caught by those same rules.
+ */
+.overlay-note {
   display: flex;
   align-items: center;
   justify-content: center;

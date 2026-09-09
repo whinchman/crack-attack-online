@@ -1053,7 +1053,7 @@ export default function CrackAttackGame() {
         </div>
       </div>
 
-      {challengeError && <p className="keyboard-hint">{challengeError}</p>}
+      {challengeError && <p className="overlay-note">{challengeError}</p>}
 
       <div className="game-play-area">
         <div className="game-frame">
@@ -1110,15 +1110,18 @@ export default function CrackAttackGame() {
           {match.phase === "waiting" && (
             <div className="game-overlay">
               <p>Waiting for your opponent…</p>
+              {match.status === "reconnecting" && (
+                <p className="overlay-note">Connection lost — reconnecting…</p>
+              )}
               <p className="challenge-link">{match.link}</p>
-              <button type="button" className="original-screen-action" onClick={copyChallengeLink}>
+              <button type="button" className="overlay-action" onClick={copyChallengeLink}>
                 {linkCopied ? "Copied!" : "Copy challenge link"}
               </button>
-              <p className="keyboard-hint">Keep this tab open — the link dies if you close it.</p>
+              <p className="overlay-note">Keep this tab open — the link dies if you close it.</p>
             </div>
           )}
 
-          {match.status === "reconnecting" && (match.phase === "playing" || match.phase === "waiting") && (
+          {match.status === "reconnecting" && match.phase === "playing" && (
             <div className="game-overlay game-overlay--passthrough">
               <p>Connection lost — reconnecting…</p>
             </div>
@@ -1127,7 +1130,7 @@ export default function CrackAttackGame() {
           {match.phase === "peer-gone" && (
             <div className="game-overlay game-overlay--passthrough">
               <p>Your opponent dropped out.</p>
-              <p className="keyboard-hint">Waiting 30 seconds for them to come back…</p>
+              <p className="overlay-note">Waiting 30 seconds for them to come back…</p>
             </div>
           )}
 
@@ -1136,7 +1139,7 @@ export default function CrackAttackGame() {
               <p>{match.outcome === "forfeit"
                 ? "Your opponent didn't come back. You win."
                 : "Match over."}</p>
-              <button type="button" className="original-screen-action" onClick={playAgain}>
+              <button type="button" className="overlay-action" onClick={playAgain}>
                 Play again
               </button>
             </div>
