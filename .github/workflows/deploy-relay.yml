@@ -1,0 +1,88 @@
+name: Deploy relay to Cloudflare
+
+# Separate from the site deploy on purpose: redeploying a Worker drops its live
+# WebSockets, which would boot two people out of a match. The relay changes
+# rarely, so it only runs when something under relay/ actually moved.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "relay/**"
+      - "app/net/protocol.ts"          # the relay imports this; a wire change must redeploy both sides
+      - ".github/workflows/deploy-relay.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-relay
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+
+      - name: Install
+        working-directory: relay
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: relay
+        run: npm run typecheck
+
+      - name: Tests
+        working-directory: relay
+        run: npm test
+
+      # The Durable Object's storage backend is fixed at first deploy and cannot
+      # be migrated afterwards - switching means tearing the namespace down and
+      # re-provisioning under a new class name. Fail loudly rather than let a
+      # careless edit to wrangler.toml silently change it.
+      - name: Guard the Durable Object storage backend
+        working-directory: relay
+        run: |
+          set -euo pipefail
+          if ! grep -q 'new_sqlite_classes = \["Room"\]' wrangler.toml; then
+            echo "::error::wrangler.toml no longer declares new_sqlite_classes = [\"Room\"]."
+            echo "::error::A DO storage backend cannot be changed in place. If this is deliberate, you need a NEW class name."
+            exit 1
+          fi
+          echo "SQLite-backed Durable Object confirmed."
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: relay
+
+      # wrangler prints a green "Success!" for a Worker that has no reachable
+      # hostname at all - that exact thing happened on the first deploy of this
+      # project. Ask the relay a question and require a real answer.
+      - name: Confirm the relay actually answers
+        run: |
+          set -euo pipefail
+          BASE="${{ vars.RELAY_HTTP_BASE }}"
+          [ -n "$BASE" ] || { echo "::error::RELAY_HTTP_BASE not set; cannot verify the deploy"; exit 1; }
+
+          echo "GET $BASE/new"
+          body=$(curl -s --max-time 30 "$BASE/new")
+          echo "  -> $body"
+          echo "$body" | grep -qE '^\{"room":"[A-Z2-9]{6}"\}$' \
+            || { echo "::error::/new did not return a room code"; exit 1; }
+
+          # Without this header the browser blocks the response and the host can
+          # never create a challenge - while the WebSocket path still looks fine,
+          # because WebSockets are not subject to CORS.
+          echo "CORS preflight-less check"
+          curl -s -i --max-time 30 -H "Origin: https://crackattack.217industries.com" "$BASE/new" \
+            | grep -qi '^access-control-allow-origin:' \
+            || { echo "::error::/new is missing Access-Control-Allow-Origin"; exit 1; }
+
+          echo "Relay verified: mints room codes and sends CORS headers."

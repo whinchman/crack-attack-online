@@ -1,0 +1,72 @@
+name: CI
+
+# The gate. Runs on everything, needs no secrets, and is the only job that has
+# to pass before a deploy is allowed to start.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  game:
+    name: Game (engine, net, renderer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The determinism probe lives in here: two engine instances from one seed,
+      # 4000 ticks, asserted bit-identical. If that ever fails, the simulation
+      # has drifted and multiplayer fairness is gone, so treat it as a stop.
+      - name: Tests
+        run: npm run test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      # Asserts the artifact is relocatable: no origin-root asset URLs, assets
+      # resolve beneath whatever path it is served from, required files present.
+      - name: Validate the built artifact
+        run: npm run validate
+
+  relay:
+    name: Relay (room lifecycle, Durable Object)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+
+      - run: npm ci
+
+      # The relay has its own tsconfig with Workers types and no DOM lib. It was
+      # never typechecked at all until late in development, which hid a config
+      # error that would have failed the first deploy.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test

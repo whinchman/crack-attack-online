@@ -1,4 +1,14 @@
-name: Build, deploy, and preview GitHub Pages
+name: Staging and PR previews (GitHub Pages)
+
+# Staging, not production. Production is crackattack.217industries.com, deployed
+# by deploy-site.yml over rsync.
+#
+# The reason to keep this: every pull request gets its own live preview URL, so
+# a tweak can be played before it reaches the real site. Both point at the same
+# relay, which is fine - a room made on staging is just a room.
+#
+# It publishes nothing unless the VITE_RELAY_BASE repository variable is set,
+# so it cannot accidentally ship a build that has no relay to talk to.
 
 on:
   push:
@@ -34,19 +44,25 @@ jobs:
         run: npm ci
 
       - name: Run engine and rendering tests
-        run: npm run test:engine
+        run: npm run test
 
       - name: Type-check the static game
-        run: npm run typecheck:pages
+        run: npm run typecheck
 
       - name: Lint source
         run: npm run lint
 
       - name: Build static game
-        run: npm run build:pages
+        # The relay URL is public -- it ships in the client bundle -- so this
+        # is a repository variable, not a secret. Leaving it unset makes the
+        # build fall back to an unresolvable placeholder, which is why the
+        # production deploy below refuses to run without it.
+        run: npm run build
+        env:
+          VITE_RELAY_BASE: ${{ vars.VITE_RELAY_BASE }}
 
       - name: Validate static artifact
-        run: npm run validate:pages
+        run: npm run validate
 
       - name: Upload built site
         uses: actions/upload-artifact@v4
@@ -56,7 +72,14 @@ jobs:
           retention-days: 1
 
   deploy-production:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # Gated on the relay URL being configured. Without it this workflow would
+    # publish a second live site whose multiplayer cannot work, while the
+    # README advertised it as canonical -- two URLs for the same game, one of
+    # them broken, for an audience of six friends sharing links in Discord.
+    # Set the VITE_RELAY_BASE repository variable to enable it.
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      vars.VITE_RELAY_BASE != ''
     needs: validate
     runs-on: ubuntu-latest
     steps:
@@ -107,5 +130,5 @@ jobs:
           source-dir: dist-pages
           preview-branch: gh-pages
           umbrella-dir: pr-preview
-          pages-base-url: leifkb.github.io/crack-attack-browser
+          pages-base-url: whinchman.github.io/crack-attack-online
           qr-code: false

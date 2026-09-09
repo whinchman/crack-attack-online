@@ -15,3 +15,10 @@ https://github.com/gnu-lorien/crack-attack
 
 The derivative is licensed under the GNU General Public License, version 2 or,
 at your option, any later version. See `COPYING`.
+
+## This fork
+
+Online two-player support added in a fork of leifkb/crack-attack-browser.
+The network model (shared seed for fairness, per-peer simulation, 32-tick
+garbage/level-light exchange) is reproduced from the original Crack Attack!
+`src/Communicator.cxx` by Daniel Nelson, GPLv2-or-later.

@@ -113,6 +113,8 @@ canvas:focus-visible {
 
 .port-actions {
   gap: 8px !important;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .port-actions button {
@@ -167,6 +169,39 @@ canvas:focus-visible {
   inset: 0;
 }
 
+/*
+ * Overlay <p> text has no backdrop of its own and sits directly over
+ * whatever the board is drawing underneath, including block colours that
+ * are randomised per seed. A light block behind pale overlay text would
+ * make it unreadable on some other seed than whichever one this was tested
+ * against, so a cheap shadow (not a scrim panel, to stay faithful to the
+ * original's look) holds it legible regardless of what's underneath.
+ * Two layers rather than one: .overlay-note's muted colour (#7781aa) still
+ * washed out against the brightest block colour (yellow) with a single
+ * soft shadow, so a tighter near-black layer is stacked under the wider
+ * blurred one for real contrast without looking like a heavy outline.
+ */
+.game-overlay p {
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.95),
+    0 0 5px rgba(0, 0, 0, 0.85);
+}
+
+/*
+ * For overlays shown while the board may still be live (peer-gone grace
+ * period, a reconnecting transport): informational only, no buttons, so
+ * touches must fall through to the board underneath instead of being eaten.
+ */
+.game-overlay--passthrough {
+  pointer-events: none;
+}
+
+.challenge-link {
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+  user-select: all;
+}
+
 .original-screen-action {
   position: relative;
   display: block;
@@ -176,6 +211,36 @@ canvas:focus-visible {
   border: 0;
   background: transparent;
   cursor: pointer;
+}
+
+/*
+ * A normal, small, named button for overlay content that sits alongside
+ * other text (Copy challenge link, Play again) — NOT `.original-screen-action`,
+ * whose width/height: 100% is only correct for a lone full-frame tap target
+ * (Start/Resume) and otherwise pushes any later sibling below the visible,
+ * clipped .game-frame box.
+ */
+.overlay-action {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 10px;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(11, 14, 28, 0.78);
+  color: #ffffff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.overlay-action:hover {
+  border-color: rgba(154, 167, 255, 0.58);
 }
 
 .original-screen-action:disabled {
@@ -241,6 +306,28 @@ canvas:focus-visible {
 }
 
 .keyboard-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 12px 0 0;
+  padding: 0;
+  color: #7781aa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+}
+
+/*
+ * Same look as .keyboard-hint's base rule, but for secondary text that must
+ * stay visible on touch devices. .keyboard-hint itself is deliberately
+ * hidden under `any-pointer: coarse` and `[data-touch-controls="true"]`
+ * (below) because it documents keyboard shortcuts a touch player has no use
+ * for — this class is for everyone else's fine print (challenge errors,
+ * match-status asides) and must not be caught by those same rules.
+ */
+.overlay-note {
   display: flex;
   align-items: center;
   justify-content: center;

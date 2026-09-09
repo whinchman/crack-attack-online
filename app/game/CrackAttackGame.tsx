@@ -34,8 +34,30 @@ import {
   consumeThumbpadMotion,
   horizontalSwipePair,
 } from "./touchControls";
+import {
+  challengeUrl,
+  matchOverCopy,
+  matchOverlay,
+  roomCodeFromLocation,
+  showSoloGameOverCard,
+  soloControls,
+  useMatch,
+} from "../net/useMatch.ts";
 
 const ASSET_LOAD_TIMEOUT_MS = 8000;
+// Deliberately unresolvable. .invalid is reserved by RFC 2606 and can never
+// be registered, so a build that shipped without VITE_RELAY_BASE fails fast
+// and reads as intentional in devtools, instead of silently pointing at
+// "wss://crack-attack-relay.workers.dev" -- which is not even a valid
+// workers.dev hostname (those are <worker>.<account>.workers.dev) and so
+// looked plausible while being unreachable. Failing at module load instead
+// was rejected: solo play needs no relay at all and must not be taken down by
+// a misconfigured multiplayer option, and a blank page is not a clear
+// message. Transport gives up after a few attempts and the overlay says so.
+// `??` is not enough: an env var that is present but empty -- which is what a
+// CI `env:` block wired to an unset repository variable produces -- is a
+// string, not undefined, and would resolve to "/room/ABC123".
+const RELAY_BASE = import.meta.env.VITE_RELAY_BASE?.trim() || "wss://relay-not-configured.invalid";
 const THUMBPAD_STEP_PX = 24;
 const THUMBPAD_PUCK_RANGE_PX = 17;
 const BOARD_SWIPE_THRESHOLD = CELL_SIZE * 0.42;
@@ -302,7 +324,9 @@ function statusCopy(
 }
 
 export default function CrackAttackGame() {
-  const [engine] = useState(() => new CrackAttackEngine());
+  const roomCode = roomCodeFromLocation(window.location.href);
+  const [engine] = useState(() => new CrackAttackEngine({ multiplayer: roomCode !== null }));
+  const match = useMatch(engine, RELAY_BASE);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const assetsRef = useRef<RenderAssets>({
@@ -347,6 +371,8 @@ export default function CrackAttackGame() {
   const [visualReady, setVisualReady] = useState(false);
   const [touchControlsAvailable, setTouchControlsAvailable] = useState(false);
   const [thumbpadVisual, setThumbpadVisual] = useState<ThumbpadVisual>(IDLE_THUMBPAD_VISUAL);
+  const [challengeError, setChallengeError] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const ensureAudio = useCallback(() => {
     if (!audioRef.current) {
@@ -474,7 +500,7 @@ export default function CrackAttackGame() {
   useEffect(() => {
     let animationFrame = 0;
     const render = (now: number) => {
-      engine.update(now);
+      engine.update(match.clampNow(now));
       const current = engine.getSnapshot(now);
       for (const event of engine.drainEvents()) playEvent(audioRef.current, event);
 
@@ -521,21 +547,71 @@ export default function CrackAttackGame() {
     return () => window.cancelAnimationFrame(animationFrame);
   }, [engine]);
 
+  const soloOnly = match.phase === "solo";
+
   const startRun = useCallback(() => {
+    // In a match the seed comes from the relay and MatchController.begin()
+    // starts the engine with it. A local start would fork the simulation onto
+    // a fresh, unrelated seed while still connected and still sending garbage,
+    // so every entry point to it -- the ready overlay, the gameover overlay's
+    // restart, and the keyboard -- is gated here rather than one by one.
+    if (!soloOnly) return;
     ensureAudio();
     const now = performance.now();
     const started = engine.start(now, Date.now());
     if (started) setIsNewBest(false);
     canvasRef.current?.focus();
     setSnapshot(engine.getSnapshot(now));
-  }, [engine, ensureAudio]);
+  }, [engine, ensureAudio, soloOnly]);
 
   const pauseRun = useCallback(() => {
+    // MatchController knows nothing about pause: it keeps advancing ourTick
+    // from real time while the engine is frozen, so a pauser broadcasts ticks
+    // their board never simulated, their opponent never stalls, and the pause
+    // is free thinking time on top.
+    if (!soloOnly) return;
     const now = performance.now();
     engine.togglePause(now);
     setSnapshot(engine.getSnapshot(now));
     canvasRef.current?.focus();
-  }, [engine]);
+  }, [engine, soloOnly]);
+
+  const createChallenge = useCallback(async () => {
+    setChallengeError(null);
+    try {
+      const relayHttpBase = RELAY_BASE.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+      const response = await fetch(`${relayHttpBase}/new`);
+      if (!response.ok) throw new Error(`relay responded with ${response.status}`);
+      const { room } = (await response.json()) as { room: string };
+      window.location.href = challengeUrl(window.location.href, room);
+      // Assigning a fragment-only href does not by itself trigger a
+      // navigation/reload, so the explicit reload() below is required to
+      // actually leave solo mode and construct the engine as multiplayer.
+      window.location.reload();
+    } catch {
+      setChallengeError("Couldn't reach the server — try again");
+    }
+  }, []);
+
+  const copyChallengeLink = useCallback(() => {
+    if (!match.link) return;
+    navigator.clipboard?.writeText(match.link).then(
+      () => {
+        setLinkCopied(true);
+        window.setTimeout(() => setLinkCopied(false), 2000);
+      },
+      () => {},
+    );
+  }, [match.link]);
+
+  const playAgain = useCallback(() => {
+    const href = window.location.href;
+    const base = href.includes("#") ? href.slice(0, href.indexOf("#")) : href;
+    window.location.href = base;
+    // As above: the fragment-stripping assignment alone doesn't reload, so
+    // the explicit reload() is required to drop back into solo mode.
+    window.location.reload();
+  }, []);
 
   const attemptSwap = useCallback((withTactileFeedback = false) => {
     ensureAudio();
@@ -616,6 +692,10 @@ export default function CrackAttackGame() {
 
   useEffect(() => {
     const onVisibility = () => {
+      // Same reason as pauseRun: an auto-pause would desync a live match. A
+      // backgrounded tab in a match is handled by the stall instead, which the
+      // opponent can see.
+      if (!soloOnly) return;
       const now = performance.now();
       const status = engine.getSnapshot(now).status;
       if (document.hidden && (status === "playing" || status === "countdown")) {
@@ -624,7 +704,7 @@ export default function CrackAttackGame() {
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [engine]);
+  }, [engine, soloOnly]);
 
   useEffect(() => {
     const cancelPointer = (event: PointerEvent) => {
@@ -975,6 +1055,7 @@ export default function CrackAttackGame() {
     }
   };
 
+  const overlay = matchOverlay(match);
   const restartPrompt = gameOverRestartPrompt(
     snapshot.gameOverElapsedMs,
     GAME_OVER_RESTART_DELAY_MS,
@@ -999,11 +1080,22 @@ export default function CrackAttackGame() {
           <button type="button" onClick={toggleSound}>
             {soundEnabled ? "Sound on" : "Sound off"}
           </button>
-          <button type="button" onClick={pauseRun} disabled={snapshot.status === "ready" || snapshot.status === "gameover"}>
+          <button
+            type="button"
+            onClick={pauseRun}
+            disabled={!soloControls(match.phase, snapshot.status, restartPrompt.ready).canPause}
+          >
             {snapshot.status === "paused" ? "Resume" : "Pause"}
           </button>
+          {match.phase === "solo" && (
+            <button type="button" onClick={createChallenge} disabled={snapshot.status !== "ready"}>
+              Challenge a friend
+            </button>
+          )}
         </div>
       </div>
+
+      {challengeError && <p className="overlay-note">{challengeError}</p>}
 
       <div className="game-play-area">
         <div className="game-frame">
@@ -1036,13 +1128,13 @@ export default function CrackAttackGame() {
             </div>
           )}
 
-          {snapshot.status === "gameover" && (
+          {showSoloGameOverCard(snapshot.status, overlay) && (
             <div className="game-overlay">
               <button
                 type="button"
                 className="original-screen-action"
                 onClick={startRun}
-                disabled={!restartPrompt.ready}
+                disabled={!soloControls(match.phase, snapshot.status, restartPrompt.ready).canRestart}
               >
                 <span className="game-over-summary">
                   {isNewBest && <strong>New best</strong>}
@@ -1053,6 +1145,64 @@ export default function CrackAttackGame() {
                   </span>
                   <small>{restartPrompt.text}</small>
                 </span>
+              </button>
+            </div>
+          )}
+
+          {overlay === "waiting" && (
+            <div className="game-overlay">
+              <p>Waiting for your opponent…</p>
+              {match.status === "reconnecting" && (
+                <p className="overlay-note">Connection lost — reconnecting…</p>
+              )}
+              <p className="challenge-link">{match.link}</p>
+              <button type="button" className="overlay-action" onClick={copyChallengeLink}>
+                {linkCopied ? "Copied!" : "Copy challenge link"}
+              </button>
+              <p className="overlay-note">Keep this tab open — the link dies if you close it.</p>
+            </div>
+          )}
+
+          {overlay === "unreachable" && (
+            <div className="game-overlay">
+              <p>Can&rsquo;t reach the game server.</p>
+              <p className="overlay-note">
+                This link may be too old, or the game may be set up wrong. Ask
+                your friend to send a fresh one.
+              </p>
+              <button type="button" className="overlay-action" onClick={playAgain}>
+                Play on your own
+              </button>
+            </div>
+          )}
+
+          {overlay === "reconnecting" && (
+            <div className="game-overlay game-overlay--passthrough">
+              <p>Connection lost — reconnecting…</p>
+            </div>
+          )}
+
+          {overlay === "waiting-peer" && (
+            <div className="game-overlay game-overlay--passthrough">
+              <p>Waiting for your opponent&rsquo;s game…</p>
+              <p className="overlay-note">
+                Your board is held still so you can&rsquo;t run ahead of them.
+              </p>
+            </div>
+          )}
+
+          {overlay === "peer-gone" && (
+            <div className="game-overlay game-overlay--passthrough">
+              <p>Your opponent dropped out.</p>
+              <p className="overlay-note">Waiting 30 seconds for them to come back…</p>
+            </div>
+          )}
+
+          {overlay === "over" && (
+            <div className="game-overlay">
+              <p>{matchOverCopy(match.outcome)}</p>
+              <button type="button" className="overlay-action" onClick={playAgain}>
+                Play again
               </button>
             </div>
           )}

@@ -6,8 +6,6 @@ import { fileURLToPath } from "node:url";
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = resolve(projectRoot, "dist-pages");
 const htmlPath = resolve(outputRoot, "index.html");
-const canonicalUrl = "https://leifkb.github.io/crack-attack-browser/";
-const socialImageUrl = `${canonicalUrl}crack-attack-assets/logo.png`;
 
 assert.ok(existsSync(htmlPath), "GitHub Pages build must emit index.html");
 const html = readFileSync(htmlPath, "utf8");
@@ -22,19 +20,29 @@ function metaContent(property) {
   return tag?.match(/\bcontent=["']([^"']*)["']/i)?.[1] ?? null;
 }
 
-assert.match(
+// This build is relocatable: `base: "./"` means it runs from any origin and any
+// subdirectory. Metadata that names one specific host would be wrong everywhere
+// else, and a canonical pointing at another site tells crawlers this page is a
+// copy. Assert the relocatable shape instead of a fixed URL.
+assert.doesNotMatch(
   html,
-  new RegExp(`<link\\b[^>]*\\brel=["']canonical["'][^>]*\\bhref=["']${canonicalUrl}["']`),
+  /<link\b[^>]*\brel=["']canonical["']/i,
+  "a relocatable build must not claim a canonical host",
+);
+assert.equal(
+  metaContent("og:url"),
+  null,
+  "og:url must be omitted so scrapers fall back to the URL actually shared",
 );
 assert.equal(metaContent("og:title"), "Crack Attack! — Browser Port");
 assert.equal(metaContent("og:type"), "website");
-assert.equal(metaContent("og:url"), canonicalUrl);
 assert.equal(
   metaContent("og:description"),
-  "A playable single-player browser port of the open-source puzzle game Crack Attack!",
+  "A browser port of the open-source puzzle game Crack Attack! Play solo, or send a friend a challenge link.",
 );
-assert.equal(metaContent("og:image"), socialImageUrl);
-assert.equal(metaContent("og:image:secure_url"), socialImageUrl);
+// Relative, so a Discord or Slack preview loads the logo from whatever host is
+// actually serving the page rather than hotlinking the upstream fork's copy.
+assert.equal(metaContent("og:image"), "./crack-attack-assets/logo.png");
 assert.equal(metaContent("og:image:type"), "image/png");
 assert.equal(metaContent("og:image:width"), "256");
 assert.equal(metaContent("og:image:height"), "256");
@@ -71,4 +79,4 @@ assert.doesNotMatch(
   "the game bundle must resolve artwork beneath the Pages project path",
 );
 
-console.log("Validated repository-subpath-safe GitHub Pages artifact.");
+console.log("Validated relocatable static artifact (any origin, any subpath).");

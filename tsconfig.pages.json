@@ -3,13 +3,15 @@
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "incremental": false,
-    "types": ["vite/client"]
+    "types": ["vite/client", "node"]
   },
   "include": [
     "app/game/**/*.ts",
     "app/game/**/*.tsx",
+    "app/net/**/*.ts",
     "github-pages/**/*.ts",
     "github-pages/**/*.tsx",
+    "tests/**/*.ts",
     "vite.pages.config.ts"
   ],
   "exclude": ["node_modules", "dist-pages"]

@@ -25,14 +25,14 @@ import {
   type RewardMote,
   type RewardSign,
   type SparkleStyle,
-} from "./engine";
+} from "./engine.ts";
 import {
   BlockWebGLLayer,
   moteLightCenterFade,
   type WebGLLightBounds,
   type WebGLPointLight,
-} from "./blockWebGL";
-import { scoreToBeat } from "./highScore";
+} from "./blockWebGL.ts";
+import { scoreToBeat } from "./highScore.ts";
 import {
   creepRowBlockMaterial,
   countdownVisual,
@@ -43,6 +43,8 @@ import {
   garbageShatterVisual,
   levelLightColor,
   levelLightScreenY,
+  LEVEL_LIGHT_BLUE,
+  LEVEL_LIGHT_RED,
   loseBarToneAt,
   loseBarVisual,
   messagePulseAlpha,
@@ -53,14 +55,14 @@ import {
   swapperVisible,
   type Color3,
   type GarbageMesh,
-} from "./renderGeometry";
+} from "./renderGeometry.ts";
 import {
   ORIGINAL_CAMERA_DISTANCE,
   ORIGINAL_LIGHT_POSITION,
   projectWorldPoint,
   screenCenterToWorld,
   type Vector3,
-} from "./worldView";
+} from "./worldView.ts";
 
 export const CANVAS_WIDTH = 800;
 export const CANVAS_HEIGHT = 800;
@@ -922,6 +924,26 @@ function drawLevelLights(context: CanvasRenderingContext2D, snapshot: GameSnapsh
     const flashing = snapshot.dangerFlashAlarm >= 0 || impactFlash > 0;
     drawLevelTriangle(context, 18, y, 1, color, flashing);
     drawLevelTriangle(context, 782, y, -1, color, flashing);
+  }
+}
+
+/** Mirrors the original's LL_OPPONENT_LIGHTS column on the right of the board. */
+export function drawOpponentLights(
+  context: CanvasRenderingContext2D,
+  snapshot: GameSnapshot,
+): void {
+  const bits = snapshot.opponentLevelLights ?? 0;
+  if (bits === 0) return;
+  const lampWidth = 14;
+  const lampHeight = Math.floor(CELL_SIZE * 0.5);
+  const x = BOARD_X + BOARD_WIDTH + 18;
+  const redColor = colorToCss(LEVEL_LIGHT_RED);
+  const blueColor = colorToCss(LEVEL_LIGHT_BLUE);
+  for (let row = 0; row < VISIBLE_ROWS; row += 1) {
+    const isOccupied = (bits & (1 << row)) !== 0;
+    context.fillStyle = isOccupied ? redColor : blueColor;
+    const y = BOARD_BOTTOM - (row + 1) * CELL_SIZE + (CELL_SIZE - lampHeight) / 2;
+    context.fillRect(x, y, lampWidth, lampHeight);
   }
 }
 
@@ -2409,6 +2431,7 @@ export function drawGame(
   target.textBaseline = "alphabetic";
   drawBackdrop(target);
   drawLevelLights(target, snapshot);
+  drawOpponentLights(target, snapshot);
   drawLogo(target, assets);
   // displayMeta draws the same external candy as live play: the inactive lose
   // bar, four score digits, and the solo record star remain on the key-wait
