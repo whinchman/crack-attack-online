@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - **Node >= 22.13.0** (upstream `package.json` engines field). Tests run via `node --experimental-strip-types --test tests/*.test.ts` with no build step and no `npm install` required for engine tests.
-- **License: GPL-2.0-or-later.** Preserve `COPYING`, `COPYRIGHT`, and `ATTRIBUTION.md`. Add our own attribution noting the fork; do not remove existing credits (Daniel Nelson, Wade Lutgen, leifkb).
+- **License: GPL-2.0-or-later.** Preserve `COPYING`, `COPYRIGHT`, and `ATTRIBUTION.md`. Add our own attribution noting the fork; do not remove existing credits (Daniel Nelson, leifkb). Note: Wade Lutgen is credited in the *original C++* `obj_block.cxx` but appears nowhere in this TypeScript repo — there is nothing here to preserve on his behalf.
 - **No accounts, no auth, no persistent user data.** The only server-side state is an in-flight room.
 - **Zero friction to join:** opening a challenge link must go straight into the game. No name entry, no settings screen, no permission prompts, no modal before the first block.
 - **Rooms are live-only pre-game:** a room exists only while the host holds an open socket on the waiting screen. Host closes the tab, the link is dead.
