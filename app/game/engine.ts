@@ -54,6 +54,10 @@ export const LEVEL_LIGHT_IMPACT_FLASH_MS = 20 * 20;
 export const LEVEL_LIGHT_DEATH_FLASH_TICKS = 12;
 export const GARBAGE_ROW_REFORM_CHANCE = 0.5;
 export const GARBAGE_QUEUE_CAPACITY = 8;
+// Mirrors the wire protocol's per-exchange cap (GARBAGE_QUEUE_SIZE in
+// app/net/protocol.ts). Kept as a local constant rather than importing that
+// module, which already imports GarbageFlavor from here.
+const OUTGOING_ATTACK_QUEUE_CAPACITY = 8;
 export const SWAP_DURATION_MS = 6 * 20;
 export const LOSE_BAR_FADE_TICKS = 20;
 // The original simulation consumes every elapsed 20 ms tick. Rendering may
@@ -1538,7 +1542,7 @@ export class CrackAttackEngine {
 
   /** Buffer an attack for the network layer to drain on its own cadence. */
   queueOutgoingAttack(attack: AttackPayload): void {
-    if (this.outgoingAttacks.length >= 8) return;
+    if (this.outgoingAttacks.length >= OUTGOING_ATTACK_QUEUE_CAPACITY) return;
     this.outgoingAttacks.push(attack);
   }
 
@@ -1566,7 +1570,11 @@ export class CrackAttackEngine {
     return bits >>> 0;
   }
 
-  /** End the game as a win because the opponent failed to return. */
+  /**
+   * Ends the game because the opponent forfeited. The engine does not record
+   * who won — status becomes "gameover" exactly as on a loss. The win
+   * narrative belongs to the caller (see useMatch's MatchOutcome).
+   */
   forfeitWin(now: number): void {
     this.finishGame(now);
   }
