@@ -167,6 +167,12 @@ canvas:focus-visible {
   inset: 0;
 }
 
+.challenge-link {
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+  user-select: all;
+}
+
 .original-screen-action {
   position: relative;
   display: block;

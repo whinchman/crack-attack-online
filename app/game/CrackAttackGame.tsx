@@ -34,8 +34,10 @@ import {
   consumeThumbpadMotion,
   horizontalSwipePair,
 } from "./touchControls";
+import { challengeUrl, roomCodeFromLocation, useMatch } from "../net/useMatch.ts";
 
 const ASSET_LOAD_TIMEOUT_MS = 8000;
+const RELAY_BASE = import.meta.env.VITE_RELAY_BASE ?? "wss://crack-attack-relay.workers.dev";
 const THUMBPAD_STEP_PX = 24;
 const THUMBPAD_PUCK_RANGE_PX = 17;
 const BOARD_SWIPE_THRESHOLD = CELL_SIZE * 0.42;
@@ -302,7 +304,9 @@ function statusCopy(
 }
 
 export default function CrackAttackGame() {
-  const [engine] = useState(() => new CrackAttackEngine());
+  const roomCode = roomCodeFromLocation(window.location.href);
+  const [engine] = useState(() => new CrackAttackEngine({ multiplayer: roomCode !== null }));
+  const match = useMatch(engine, RELAY_BASE);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const assetsRef = useRef<RenderAssets>({
@@ -474,7 +478,7 @@ export default function CrackAttackGame() {
   useEffect(() => {
     let animationFrame = 0;
     const render = (now: number) => {
-      engine.update(now);
+      engine.update(match.clampNow(now));
       const current = engine.getSnapshot(now);
       for (const event of engine.drainEvents()) playEvent(audioRef.current, event);
 
@@ -536,6 +540,13 @@ export default function CrackAttackGame() {
     setSnapshot(engine.getSnapshot(now));
     canvasRef.current?.focus();
   }, [engine]);
+
+  const createChallenge = useCallback(async () => {
+    const response = await fetch(`${RELAY_BASE.replace(/^wss:/, "https:")}/new`);
+    const { room } = (await response.json()) as { room: string };
+    window.location.href = challengeUrl(window.location.href, room);
+    window.location.reload();
+  }, []);
 
   const attemptSwap = useCallback((withTactileFeedback = false) => {
     ensureAudio();
@@ -1055,6 +1066,43 @@ export default function CrackAttackGame() {
                 </span>
               </button>
             </div>
+          )}
+
+          {match.phase === "waiting" && (
+            <div className="game-overlay">
+              <p>Waiting for your opponent…</p>
+              <p className="challenge-link">{match.link}</p>
+              <button
+                type="button"
+                className="original-screen-action"
+                onClick={() => navigator.clipboard.writeText(match.link ?? "")}
+              >
+                Copy challenge link
+              </button>
+              <p className="keyboard-hint">Keep this tab open — the link dies if you close it.</p>
+            </div>
+          )}
+
+          {match.phase === "peer-gone" && (
+            <div className="game-overlay">
+              <p>Your opponent dropped out.</p>
+              <p className="keyboard-hint">Waiting 30 seconds for them to come back…</p>
+            </div>
+          )}
+
+          {match.phase === "over" && (
+            <div className="game-overlay">
+              <p>{match.outcome === "forfeit"
+                ? "Your opponent didn't come back. You win."
+                : "Match over."}</p>
+              <p className="keyboard-hint">Create a new challenge link to play again.</p>
+            </div>
+          )}
+
+          {match.phase === "solo" && (
+            <button type="button" className="original-screen-action" onClick={createChallenge}>
+              Challenge a friend
+            </button>
           )}
         </div>
 
