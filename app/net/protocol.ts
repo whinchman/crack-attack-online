@@ -1,4 +1,5 @@
 import type { GarbageFlavor } from "../game/engine.ts";
+import { BOARD_COLUMNS, VISIBLE_ROWS } from "../game/engine.ts";
 
 /** Simulation tick length, matching GC_TIME_STEP_PERIOD in the original. */
 export const TICK_MS = 20;
@@ -12,6 +13,12 @@ export const RECONNECT_GRACE_MS = 30_000;
 /** Bit flags mirroring the original's game_state field. */
 export const STATE_PAUSED = 1 << 0;
 export const STATE_LOST = 1 << 1;
+
+/**
+ * Maximum tick value: 6 hours at 50 Hz. An absurd tick is a bug or an attack.
+ * We don't trust the peer's numbers, per the comment at parseServerMessage.
+ */
+export const MAX_TICK = 1_080_000;
 
 export interface WireAttack {
   tick: number;
@@ -38,22 +45,30 @@ export type ServerMessage =
   | { t: "error"; reason: "full" | "missing" | "malformed" }
   | SyncMessage;
 
-const FLAVORS: readonly string[] = ["normal", "gray"];
+// Keep in sync with GarbageFlavor in app/game/engine.ts
+const FLAVORS: readonly GarbageFlavor[] = ["normal", "gray"];
 
 function isUint(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isGarbageFlavor(value: unknown): value is GarbageFlavor {
+  return typeof value === "string" && FLAVORS.includes(value as GarbageFlavor);
 }
 
 function parseAttack(raw: unknown): WireAttack | null {
   if (typeof raw !== "object" || raw === null) return null;
   const a = raw as Record<string, unknown>;
   if (!isUint(a.tick) || !isUint(a.height) || !isUint(a.width)) return null;
-  if (typeof a.flavor !== "string" || !FLAVORS.includes(a.flavor)) return null;
+  if (a.tick > MAX_TICK) return null;
+  if (a.height < 1 || a.height > VISIBLE_ROWS) return null;
+  if (a.width < 1 || a.width > BOARD_COLUMNS) return null;
+  if (!isGarbageFlavor(a.flavor)) return null;
   return {
     tick: a.tick,
     height: a.height,
     width: a.width,
-    flavor: a.flavor as GarbageFlavor,
+    flavor: a.flavor,
   };
 }
 
@@ -87,6 +102,11 @@ export function parseServerMessage(raw: string): ServerMessage | null {
       return { t: "error", reason: m.reason };
     case "sync": {
       if (!isUint(m.tick) || !isUint(m.lights) || !isUint(m.state)) return null;
+      if (m.tick > MAX_TICK) return null;
+      if (m.lights >= 2 ** VISIBLE_ROWS) return null;
+      // state: accept a byte of headroom. A strict mask of 3 (STATE_PAUSED|STATE_LOST)
+      // would silently reject valid traffic if someone adds a flag and forgets to update it.
+      if (m.state >= 256) return null;
       if (!Array.isArray(m.attacks)) return null;
       const attacks: WireAttack[] = [];
       // Bound the queue on receive. The original trusts the peer's count here,
