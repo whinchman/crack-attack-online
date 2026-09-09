@@ -34,8 +34,10 @@ export default function Home() {
       <footer className="port-footer">
         <p>
           A GPL-2.0-or-later derivative of <a href="https://www.nongnu.org/crack-attack/">Crack Attack!</a>,
-          originally created by Daniel R. Nelson and contributors. Original artwork is redistributed
-          under the project&apos;s license.
+          originally created by Daniel R. Nelson and contributors. Built on the{' '}
+            <a href="https://github.com/leifkb/crack-attack-browser">browser port by leifkb</a>,
+            with online play added. Original artwork is redistributed under the
+            project&apos;s license.
         </p>
         <div>
           <a href="https://github.com/gnu-lorien/crack-attack">Original source</a>

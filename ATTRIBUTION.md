@@ -18,7 +18,12 @@ at your option, any later version. See `COPYING`.
 
 ## This fork
 
-Online two-player support added in a fork of leifkb/crack-attack-browser.
+Modified in September 2026 by Will Hinchman, in a fork of
+leifkb/crack-attack-browser, to add online two-player support. Changed files
+include `app/game/engine.ts` (attack buffering, opponent level lights),
+`app/game/renderer.ts` (the opponent light column) and
+`app/game/CrackAttackGame.tsx` (match wiring and overlays), plus the new
+`app/net/` and `relay/` directories.
 The network model (shared seed for fairness, per-peer simulation, 32-tick
 garbage/level-light exchange) is reproduced from the original Crack Attack!
 `src/Communicator.cxx` by Daniel Nelson, GPLv2-or-later.

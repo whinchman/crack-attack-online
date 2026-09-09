@@ -11,3 +11,9 @@ Dennis Lubert
 Wolfgang Klier <wolfgang@klier.org>
 Till Schuberth
 Bjørn Lindeijer <bjorn@lindeijer.nl>
+
+The browser reimplementation (TypeScript engine, renderer, and UI) is
+Copyright (C) 2026 leifkb <eurleif@gmail.com>.
+
+Online two-player support (relay, transport, match controller) is
+Copyright (C) 2026 Will Hinchman.
