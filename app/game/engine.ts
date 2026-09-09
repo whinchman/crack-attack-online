@@ -640,6 +640,7 @@ export interface GameSnapshot {
   headlightLevel: number;
   hudStarRotation: number;
   hudStarAlpha: number;
+  opponentLevelLights: number;
 }
 
 type Phase = "idle" | "swapping" | "clearing" | "falling" | "garbage";
@@ -937,6 +938,9 @@ export class CrackAttackEngine {
   private concessionPending = false;
   private queuedAttacks: QueuedAttack[] = [];
   private attackSink: AttackSink | null;
+  private outgoingAttacks: AttackPayload[] = [];
+  private opponentLights = 0;
+  private multiplayer: boolean;
   private randomState: number;
   // BlockManager keeps independent, game-long generation histories for creep
   // rows and garbage-awakened blocks. They intentionally do not inspect the
@@ -981,9 +985,10 @@ export class CrackAttackEngine {
   );
   private levelLightImpactUntil = Array.from({ length: VISIBLE_ROWS }, () => 0);
 
-  constructor(options: { seed?: number; attackSink?: AttackSink } = {}) {
+  constructor(options: { seed?: number; attackSink?: AttackSink; multiplayer?: boolean } = {}) {
     this.randomState = (options.seed ?? Date.now()) >>> 0 || 0x6d2b79f5;
     this.attackSink = options.attackSink ?? null;
+    this.multiplayer = options.multiplayer ?? false;
     this.reset();
   }
 
@@ -1040,6 +1045,8 @@ export class CrackAttackEngine {
     this.creepShiftPending = false;
     this.concessionPending = false;
     this.queuedAttacks = [];
+    this.outgoingAttacks = [];
+    this.opponentLights = 0;
     this.creepLastFlavor = 0;
     this.creepSecondLastFlavor = 0;
     this.creepLastRow = Array.from({ length: BOARD_COLUMNS }, () => 0);
@@ -1529,6 +1536,41 @@ export class CrackAttackEngine {
     this.sortAttackQueue();
   }
 
+  /** Buffer an attack for the network layer to drain on its own cadence. */
+  queueOutgoingAttack(attack: AttackPayload): void {
+    if (this.outgoingAttacks.length >= 8) return;
+    this.outgoingAttacks.push(attack);
+  }
+
+  /** Take everything queued since the last call. */
+  drainOutgoingAttacks(): AttackPayload[] {
+    return this.outgoingAttacks.splice(0);
+  }
+
+  /** Record the opponent's stack-height bits for rendering. */
+  setOpponentLevelLights(bits: number): void {
+    this.opponentLights = bits >>> 0;
+  }
+
+  /**
+   * Summarise our own stack height as one bit per visible row, mirroring the
+   * original's level_lights field. Reuses the existing private
+   * `topOccupiedRow(now)` helper (engine.ts:3346) rather than re-traversing.
+   */
+  exportLevelLights(now: number): number {
+    const top = this.topOccupiedRow(now);
+    let bits = 0;
+    for (let row = 0; row < VISIBLE_ROWS; row += 1) {
+      if (row <= top) bits |= 1 << row;
+    }
+    return bits >>> 0;
+  }
+
+  /** End the game as a win because the opponent failed to return. */
+  forfeitWin(now: number): void {
+    this.finishGame(now);
+  }
+
   drainEvents(): GameEvent[] {
     const drained = this.events;
     this.events = [];
@@ -1653,6 +1695,7 @@ export class CrackAttackEngine {
       headlightLevel,
       hudStarRotation: hudStar.rotation,
       hudStarAlpha: hudStar.alpha,
+      opponentLevelLights: this.opponentLights,
     };
   }
 
@@ -2904,6 +2947,7 @@ export class CrackAttackEngine {
 
   private emitAttack(attack: AttackPayload): void {
     if (this.attackSink) this.attackSink(attack);
+    else if (this.multiplayer) this.queueOutgoingAttack(attack);
     else this.receiveAttack(attack);
   }
 
