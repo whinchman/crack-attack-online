@@ -1,4 +1,14 @@
-name: Build, deploy, and preview GitHub Pages
+name: Staging and PR previews (GitHub Pages)
+
+# Staging, not production. Production is crackattack.217industries.com, deployed
+# by deploy-site.yml over rsync.
+#
+# The reason to keep this: every pull request gets its own live preview URL, so
+# a tweak can be played before it reaches the real site. Both point at the same
+# relay, which is fine - a room made on staging is just a room.
+#
+# It publishes nothing unless the VITE_RELAY_BASE repository variable is set,
+# so it cannot accidentally ship a build that has no relay to talk to.
 
 on:
   push:

@@ -1,0 +1,110 @@
+name: Deploy game to 217industries
+
+# Publishes the playable game to crackattack.217industries.com over rsync.
+#
+# The relay is deployed separately (deploy-relay.yml) because it changes rarely
+# and redeploying it drops any live WebSocket, which would boot two people out
+# of a match mid-game.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "github-pages/**"
+      - "public/**"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.pages.config.ts"
+      - "tsconfig*.json"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-site
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Re-run the gate here rather than trusting that CI passed on this commit.
+      # A deploy that skips its own tests is a deploy that eventually ships
+      # something nobody ran.
+      - name: Tests
+        run: npm run test
+
+      - name: Build
+        env:
+          VITE_RELAY_BASE: ${{ vars.VITE_RELAY_BASE }}
+        run: npm run build
+
+      - name: Validate the built artifact
+        run: npm run validate
+
+      # THE CHECK THAT MATTERS.
+      #
+      # Vite reads env files from `envDir`, which defaults to `root` - and this
+      # project's root is github-pages/, not the repo root. A missing or
+      # misplaced VITE_RELAY_BASE therefore produces a completely successful
+      # build that silently ships the unusable placeholder, with every other
+      # gate green. The only way to catch it is to look inside the bundle.
+      #
+      # Symptom if this ever regresses: the host sees "Couldn't reach the
+      # server", and the joiner sees an endless "Connection lost - reconnecting"
+      # with nothing explaining why.
+      - name: Verify the relay URL actually reached the bundle
+        run: |
+          set -euo pipefail
+          if [ -z "${{ vars.VITE_RELAY_BASE }}" ]; then
+            echo "::error::VITE_RELAY_BASE repository variable is not set. Refusing to ship a build that cannot connect."
+            exit 1
+          fi
+          if grep -rq "relay-not-configured.invalid" dist-pages/assets/*.js && \
+             ! grep -rq "${{ vars.VITE_RELAY_BASE }}" dist-pages/assets/*.js; then
+            echo "::error::The bundle contains only the placeholder relay URL. VITE_RELAY_BASE did not reach the build."
+            exit 1
+          fi
+          echo "Relay URL found in bundle:"
+          grep -oh 'wss://[^"`]*' dist-pages/assets/*.js | sort -u | sed 's/^/  /'
+
+      - name: Set up the deploy key
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          # Pinned, not StrictHostKeyChecking=no. Verified against the key this
+          # host was already presenting from a trusted session.
+          echo "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      # The key on the server is locked to `command="rrsync ~/crackattack.217industries.com"`,
+      # so it can do nothing but rsync into that one directory - no shell, no
+      # port forwarding, no reaching the main site. Paths below are relative to
+      # that restricted root.
+      - name: Deploy
+        run: |
+          set -euo pipefail
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes" \
+            dist-pages/ \
+            ${{ secrets.DEPLOY_SSH_TARGET }}:/
+
+      - name: Confirm the site answers
+        run: |
+          set -euo pipefail
+          URL="${{ vars.SITE_URL }}"
+          [ -n "$URL" ] || { echo "SITE_URL not set; skipping reachability check"; exit 0; }
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$URL")
+          echo "$URL -> HTTP $code"
+          [ "$code" = "200" ] || { echo "::error::Site did not return 200 after deploy"; exit 1; }
