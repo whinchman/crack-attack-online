@@ -35,6 +35,22 @@ import {
   horizontalSwipePair,
 } from "./touchControls";
 import { challengeUrl, roomCodeFromLocation, useMatch } from "../net/useMatch.ts";
+import type { MatchOutcome } from "../net/useMatch.ts";
+
+/**
+ * What the match-over overlay says. Every reason a match can end gets its own
+ * sentence: "Match over." on a dead link tells a player nothing about what to
+ * do next, and this audience is six friends on phones, not developers reading
+ * a console.
+ */
+function matchOverCopy(outcome: MatchOutcome): string {
+  switch (outcome) {
+    case "forfeit": return "Your opponent didn't come back. You win.";
+    case "expired": return "This challenge link has expired.";
+    case "full": return "That game already has two players.";
+    default: return "Match over.";
+  }
+}
 
 const ASSET_LOAD_TIMEOUT_MS = 8000;
 const RELAY_BASE = import.meta.env.VITE_RELAY_BASE ?? "wss://crack-attack-relay.workers.dev";
@@ -1136,9 +1152,7 @@ export default function CrackAttackGame() {
 
           {match.phase === "over" && (
             <div className="game-overlay">
-              <p>{match.outcome === "forfeit"
-                ? "Your opponent didn't come back. You win."
-                : "Match over."}</p>
+              <p>{matchOverCopy(match.outcome)}</p>
               <button type="button" className="overlay-action" onClick={playAgain}>
                 Play again
               </button>
