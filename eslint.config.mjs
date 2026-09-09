@@ -1,7 +1,10 @@
-import { defineConfig, globalIgnores } from "eslint/config";
+import { globalIgnores } from "eslint/config";
+import tseslint from "typescript-eslint";
 
-const eslintConfig = defineConfig([
+export default tseslint.config(
   globalIgnores(["dist-pages/**", "build/**", "node_modules/**"]),
-]);
-
-export default eslintConfig;
+  {
+    files: ["app/**/*.ts", "app/**/*.tsx", "relay/**/*.ts", "tests/**/*.ts"],
+    extends: [tseslint.configs.recommended],
+  },
+);
