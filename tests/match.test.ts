@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CrackAttackEngine } from "../app/game/engine.ts";
 import { MatchController } from "../app/net/match.ts";
-import { SYNC_PERIOD_TICKS, TICK_MS } from "../app/net/protocol.ts";
+import { STATE_LOST, SYNC_PERIOD_TICKS, TICK_MS } from "../app/net/protocol.ts";
 import type { ClientMessage, SyncMessage } from "../app/net/protocol.ts";
 
 class FakeTransport {
@@ -224,4 +224,68 @@ test("a stalled peer keeps transmitting at most one heartbeat per sync period", 
     engine.update(match.tickTo(ms));
   }
   assert.equal(transport.sent.length, 2, "expected exactly one heartbeat per elapsed period");
+});
+
+// Regression for the final review's FINAL-9: there was no way to win by
+// playing. emitSync hardcoded state: 0 and STATE_LOST was never set or read,
+// so a player who topped out just went quiet-but-alive -- their rAF loop kept
+// emitting syncs -- and their opponent played on indefinitely. The only win
+// condition that actually shipped was the opponent's wifi dropping.
+test("topping out sets STATE_LOST on the wire and reports a loss once", () => {
+  const { engine, transport, match } = makeMatch();
+  const outcomes: string[] = [];
+  match.onOutcome = (o) => outcomes.push(o);
+
+  // Reach a real gameover rather than faking the status. The peer's tick is
+  // kept current so nothing stalls; the engine needs to clear its 3s countdown
+  // before concede() will act, and the status flip lands on the next tick.
+  const keepPeerCurrent = (ms: number) => match.onSync({
+    t: "sync", tick: Math.floor(ms / TICK_MS), lights: 0, state: 0, attacks: [],
+  });
+  for (let ms = TICK_MS; ms <= 4_000; ms += TICK_MS) {
+    keepPeerCurrent(ms);
+    engine.update(match.tickTo(ms));
+  }
+  assert.equal(engine.getSnapshot(4_000).status, "playing", "setup: should be in play");
+
+  engine.concede(4_000);
+  transport.sent.length = 0;
+  for (let ms = 4_000 + TICK_MS; ms <= 6_000; ms += TICK_MS) {
+    keepPeerCurrent(ms);
+    engine.update(match.tickTo(ms));
+  }
+  assert.equal(engine.getSnapshot(6_000).status, "gameover", "setup: should have topped out");
+
+  const lostSyncs = transport.sent.filter((m) => (m as SyncMessage).state === STATE_LOST);
+  assert.ok(lostSyncs.length > 0, "the peer was never told we topped out");
+  assert.deepEqual(outcomes, ["loss"], "the loss must be reported exactly once");
+});
+
+test("a sync carrying STATE_LOST is reported as a win, exactly once", () => {
+  const { match } = makeMatch();
+  const outcomes: string[] = [];
+  match.onOutcome = (o) => outcomes.push(o);
+
+  const lost = (tick: number): SyncMessage => (
+    { t: "sync", tick, lights: 0, state: STATE_LOST, attacks: [] }
+  );
+  match.onSync(lost(SYNC_PERIOD_TICKS));
+  match.onSync(lost(SYNC_PERIOD_TICKS * 2));
+  assert.deepEqual(outcomes, ["win"]);
+});
+
+test("an ordinary sync reports nothing", () => {
+  const { match } = makeMatch();
+  const outcomes: string[] = [];
+  match.onOutcome = (o) => outcomes.push(o);
+  match.onSync({ t: "sync", tick: SYNC_PERIOD_TICKS, lights: 0, state: 0, attacks: [] });
+  assert.deepEqual(outcomes, []);
+});
+
+test("end() stops the controller transmitting", () => {
+  const { engine, transport, match } = makeMatch();
+  match.end();
+  for (let ms = TICK_MS; ms <= PERIOD_MS * 4; ms += TICK_MS) engine.update(match.tickTo(ms));
+  assert.equal(transport.sent.length, 0, "a settled match kept talking");
+  assert.equal(match.waitingForPeer, false, "a settled match should not stall");
 });

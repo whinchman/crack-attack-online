@@ -45,6 +45,8 @@ import type { MatchOutcome } from "../net/useMatch.ts";
  */
 function matchOverCopy(outcome: MatchOutcome): string {
   switch (outcome) {
+    case "win": return "You win! Your opponent topped out.";
+    case "loss": return "You topped out. Your opponent wins.";
     case "forfeit": return "Your opponent didn't come back. You win.";
     case "expired": return "This challenge link has expired.";
     case "full": return "That game already has two players.";

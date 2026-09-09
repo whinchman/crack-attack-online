@@ -1,4 +1,4 @@
-import { SYNC_PERIOD_TICKS, TICK_MS } from "./protocol.ts";
+import { STATE_LOST, SYNC_PERIOD_TICKS, TICK_MS } from "./protocol.ts";
 import type { SyncMessage, WireAttack } from "./protocol.ts";
 import type { Transport } from "./transport.ts";
 import type { CrackAttackEngine } from "../game/engine.ts";
@@ -10,6 +10,9 @@ export interface MatchStart {
   seed: number;
   role: "host" | "guest";
 }
+
+/** How the match was decided by play, as opposed to by disconnection. */
+export type PlayedOutcome = "win" | "loss";
 
 /**
  * Drives one online match. Mirrors the original's Communicator: both peers run
@@ -23,6 +26,13 @@ export class MatchController {
   peerTick = 0;
   waitingForPeer = false;
 
+  /**
+   * Called once, when the match is decided by play: our board topped out, or
+   * the peer told us theirs did. The engine has no winner concept, so the
+   * signal is read off its status here and carried on the wire's state field.
+   */
+  onOutcome: ((outcome: PlayedOutcome) => void) | null = null;
+
   private engine: CrackAttackEngine;
   private transport: Transport;
 
@@ -32,6 +42,8 @@ export class MatchController {
   private lastSyncedTick = 0;
   /** Real (not simulated) time of our last transmission, for the stall heartbeat. */
   private lastSyncSentAtMs = 0;
+  private outcomeReported = false;
+  private ended = false;
 
   constructor(engine: CrackAttackEngine, transport: Transport) {
     this.engine = engine;
@@ -48,6 +60,8 @@ export class MatchController {
     this.lastSyncSentAtMs = nowMs;
     this.peerTick = 0;
     this.waitingForPeer = false;
+    this.outcomeReported = false;
+    this.ended = false;
     this.engine.start(nowMs, start.seed);
   }
 
@@ -57,6 +71,11 @@ export class MatchController {
    * Returns the value to pass to engine.update().
    */
   tickTo(nowMs: number): number {
+    // Once the result is settled there is nothing left to negotiate: stop
+    // transmitting and stop stalling, but keep handing the engine a normally
+    // advancing clock so its game-over animation still plays out.
+    if (this.ended) return nowMs - this.stalledMs;
+
     // Bank stall time on every call, not just at exit, so simulated time is
     // frozen by construction while stalled: nowMs - stalledMs stays constant
     // regardless of how many calls or peer syncs land before we resolve.
@@ -107,13 +126,35 @@ export class MatchController {
       width: a.width,
       flavor: a.flavor,
     }));
+    // Topping out is the only way to lose by playing, and the peer has no
+    // other way to find out: our rAF loop keeps running, so without this flag
+    // we would just go quiet-but-alive and they would play on indefinitely.
+    const lost = this.engine.getSnapshot(now).status === "gameover";
     this.transport.send({
       t: "sync",
       tick,
       lights: this.engine.exportLevelLights(now),
-      state: 0,
+      state: lost ? STATE_LOST : 0,
       attacks,
     });
+    // Reported after the send, so the loss reaches the peer even if the
+    // listener responds by tearing the transport down.
+    if (lost) this.reportOutcome("loss");
+  }
+
+  /**
+   * Stop driving the match. Called once the result is settled, by any route,
+   * so we neither keep transmitting nor report a second outcome.
+   */
+  end(): void {
+    this.ended = true;
+    this.outcomeReported = true;
+  }
+
+  private reportOutcome(outcome: PlayedOutcome): void {
+    if (this.outcomeReported) return;
+    this.outcomeReported = true;
+    this.onOutcome?.(outcome);
   }
 
   /** Apply a sync received from the peer. */
@@ -123,6 +164,7 @@ export class MatchController {
     // this is a friends-only game with no anti-cheat requirement.
     this.peerTick = Math.max(this.peerTick, message.tick);
     this.waitingForPeer = false;
+    if ((message.state & STATE_LOST) !== 0) this.reportOutcome("win");
     this.engine.setOpponentLevelLights(message.lights);
     for (const attack of message.attacks) {
       this.engine.receiveAttack({

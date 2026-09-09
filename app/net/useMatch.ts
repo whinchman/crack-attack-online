@@ -31,7 +31,7 @@ export type MatchPhase = "solo" | "waiting" | "playing" | "peer-gone" | "over";
  * already full are both "the game is over" to the code but need to tell the
  * player two different things.
  */
-export type MatchOutcome = "forfeit" | "expired" | "full" | "ended" | null;
+export type MatchOutcome = "win" | "loss" | "forfeit" | "expired" | "full" | "ended" | null;
 
 export interface MatchState {
   phase: MatchPhase;
@@ -49,6 +49,12 @@ function errorOutcome(reason: "full" | "missing" | "malformed"): MatchOutcome {
   if (reason === "missing") return "expired";
   if (reason === "full") return "full";
   return "ended";
+}
+
+/** Settle the match, unless a result is already settled. "over" is terminal. */
+export function settleMatch(state: MatchState, outcome: MatchOutcome): MatchState {
+  if (state.phase === "over") return state;
+  return { ...state, phase: "over", outcome };
 }
 
 /**
@@ -107,14 +113,14 @@ export function reduceMatch(
     case "forfeit":
       if (state.phase === "over") return { state, effects: { ...NO_EFFECTS, closeTransport: true } };
       return {
-        state: { ...state, phase: "over", outcome: "forfeit" },
+        state: settleMatch(state, "forfeit"),
         effects: { ...NO_EFFECTS, winLocally: true, closeTransport: true },
       };
     case "error":
       // A late error must never clobber a win screen with "Match over."
       if (state.phase === "over") return { state, effects: { ...NO_EFFECTS, closeTransport: true } };
       return {
-        state: { ...state, phase: "over", outcome: errorOutcome(message.reason) },
+        state: settleMatch(state, errorOutcome(message.reason)),
         effects: { ...NO_EFFECTS, closeTransport: true },
       };
   }
@@ -152,6 +158,16 @@ export function useMatch(engine: CrackAttackEngine, relayBase: string) {
       link: challengeUrl(window.location.href, room),
       outcome: null,
     });
+
+    // Decided by play: either our board topped out, or the peer's did. The
+    // controller reads the loss off the engine's status and carries it on the
+    // wire; the win/lose narrative belongs here, not in the engine.
+    controller.onOutcome = (outcome) => {
+      controller.end();
+      if (outcome === "win") engine.forfeitWin(performance.now());
+      transport.close();
+      commit(settleMatch(stateRef.current, outcome));
+    };
 
     transport.onStatus((status) => commit({ ...stateRef.current, status }));
     transport.onMessage((message) => {
