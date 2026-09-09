@@ -1,0 +1,13 @@
+{
+  "name": "crack-attack-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.92.0",
+    "@cloudflare/workers-types": "^4.20260101.0"
+  }
+}
