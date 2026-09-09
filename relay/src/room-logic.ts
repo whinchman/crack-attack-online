@@ -45,14 +45,14 @@ export class RoomLogic {
   }
 
   /**
-   * A room with nobody in it is dead immediately. A room that has been paired
-   * and lost one peer stays alive for the reconnect grace window. A room that
-   * was never paired dies as soon as the host leaves (live-only challenge links).
+   * A room that was never paired dies as soon as it empties out — a live-only
+   * challenge link has no match to preserve. A room that has been paired stays
+   * alive across any departure (one peer or both) until the reconnect grace
+   * window elapses, regardless of how many peers are currently present.
    */
   expiredAt(nowMs: number): boolean {
-    if (this.peers.size === 0) return true;
-    if (this.peers.size === 2 || this.emptiedAt === null) return false;
-    if (!this.everPaired) return false;
+    if (!this.everPaired) return this.peers.size === 0;
+    if (this.emptiedAt === null) return false;
     return nowMs - this.emptiedAt > RECONNECT_GRACE_MS;
   }
 }

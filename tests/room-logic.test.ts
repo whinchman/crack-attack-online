@@ -66,3 +66,38 @@ test("wasPaired stays true after a peer drops, so the grace window applies", () 
   room.removePeer("b", 100);
   assert.equal(room.wasPaired, true);
 });
+
+test("both peers leaving a paired room does not expire it inside the grace window", () => {
+  const room = new RoomLogic(1);
+  room.addPeer("a");
+  room.addPeer("b");
+  room.removePeer("a", 1000);
+  room.removePeer("b", 1000);
+  assert.equal(room.expiredAt(1000 + RECONNECT_GRACE_MS - 1), false);
+});
+
+test("both peers leaving a paired room expires it once the grace window passes", () => {
+  const room = new RoomLogic(1);
+  room.addPeer("a");
+  room.addPeer("b");
+  room.removePeer("a", 1000);
+  room.removePeer("b", 1000);
+  assert.equal(room.expiredAt(1000 + RECONNECT_GRACE_MS + 1), true);
+});
+
+test("one peer returning after both left inside the grace window is accepted, and the room is not expired", () => {
+  const room = new RoomLogic(1);
+  room.addPeer("a");
+  room.addPeer("b");
+  room.removePeer("a", 1000);
+  room.removePeer("b", 1000);
+  assert.equal(room.addPeer("a2"), "host");
+  assert.equal(room.expiredAt(1000 + RECONNECT_GRACE_MS + 1), false);
+});
+
+test("a never-paired host leaving still expires the room immediately, with no grace", () => {
+  const room = new RoomLogic(1);
+  room.addPeer("a");
+  room.removePeer("a", 100);
+  assert.equal(room.expiredAt(100 + RECONNECT_GRACE_MS + 1), true);
+});

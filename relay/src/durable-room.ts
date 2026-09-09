@@ -1,4 +1,4 @@
-import { RoomLogic } from "./room-logic.ts";
+import { RoomLogic, type Role } from "./room-logic.ts";
 import { RECONNECT_GRACE_MS, parseServerMessage } from "../../app/net/protocol.ts";
 
 interface Env {
@@ -8,6 +8,7 @@ interface Env {
 export class Room {
   private logic = new RoomLogic(crypto.getRandomValues(new Uint32Array(1))[0]);
   private sockets = new Map<string, WebSocket>();
+  private roles = new Map<string, Role>();
   /** False until the first pairing has sent "start"; true for later rejoins. */
   private rejoin = false;
 
@@ -19,6 +20,14 @@ export class Room {
     }
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
+
+    if (this.logic.expiredAt(Date.now())) {
+      server.accept();
+      server.send(JSON.stringify({ t: "error", reason: "missing" }));
+      server.close(1008, "room expired");
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
     const id = crypto.randomUUID();
 
     const role = this.logic.addPeer(id);
@@ -31,6 +40,7 @@ export class Room {
 
     server.accept();
     this.sockets.set(id, server);
+    this.roles.set(id, role);
 
     server.addEventListener("message", (event: MessageEvent) => {
       const raw = typeof event.data === "string" ? event.data : "";
@@ -43,13 +53,15 @@ export class Room {
 
     const onGone = () => {
       this.sockets.delete(id);
+      this.roles.delete(id);
       this.logic.removePeer(id, Date.now());
       for (const socket of this.sockets.values()) {
         socket.send(JSON.stringify({ t: "peer-left" }));
       }
-      // A match that has actually started gets a grace window; an unclaimed
-      // challenge link dies with its host.
-      if (this.logic.wasPaired && this.sockets.size > 0) {
+      // A match that has actually started gets a grace window, even if both
+      // peers happen to drop together; an unclaimed challenge link dies with
+      // its host, with no grace.
+      if (this.logic.wasPaired) {
         void this.state.storage.setAlarm(Date.now() + RECONNECT_GRACE_MS);
       }
     };
@@ -64,14 +76,12 @@ export class Room {
           if (otherId !== id) socket.send(JSON.stringify({ t: "peer-back" }));
         }
       } else {
-        let index = 0;
-        for (const [, socket] of this.sockets) {
+        for (const [otherId, socket] of this.sockets) {
           socket.send(JSON.stringify({
             t: "start",
             seed: this.logic.seed,
-            role: index === 0 ? "host" : "guest",
+            role: this.roles.get(otherId),
           }));
-          index += 1;
         }
         this.rejoin = true;
       }
