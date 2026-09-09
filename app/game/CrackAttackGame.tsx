@@ -1045,8 +1045,15 @@ export default function CrackAttackGame() {
           <button type="button" onClick={pauseRun} disabled={snapshot.status === "ready" || snapshot.status === "gameover"}>
             {snapshot.status === "paused" ? "Resume" : "Pause"}
           </button>
+          {match.phase === "solo" && (
+            <button type="button" onClick={createChallenge} disabled={snapshot.status !== "ready"}>
+              Challenge a friend
+            </button>
+          )}
         </div>
       </div>
+
+      {challengeError && <p className="keyboard-hint">{challengeError}</p>}
 
       <div className="game-play-area">
         <div className="game-frame">
@@ -1133,15 +1140,6 @@ export default function CrackAttackGame() {
                 Play again
               </button>
             </div>
-          )}
-
-          {match.phase === "solo" && snapshot.status === "ready" && (
-            <>
-              <button type="button" className="original-screen-action" onClick={createChallenge}>
-                Challenge a friend
-              </button>
-              {challengeError && <p className="keyboard-hint">{challengeError}</p>}
-            </>
           )}
         </div>
 
