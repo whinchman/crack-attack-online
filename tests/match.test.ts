@@ -89,3 +89,40 @@ test("a peer sync releases the stall", () => {
   match.onSync({ t: "sync", tick: SYNC_PERIOD_TICKS * 3, lights: 0, state: 0, attacks: [] });
   assert.equal(match.waitingForPeer, false);
 });
+
+// Regression for a Fix Round 1 bug: while stalled, a partial peer sync (one
+// that advances peerTick but not enough to clear our lead) must not cause
+// tickTo's later, fully-resolving return value to fall BELOW a value it
+// already fed to engine.update(). The engine has no defense against time
+// running backwards, so a caller trusting tickTo's contract here could
+// corrupt tick counts, garbage timers, and delta-time math.
+test("tickTo never goes backwards across a partial catch-up while stalled", () => {
+  const { engine, match } = makeMatch();
+  const values: number[] = [];
+
+  // Run far ahead of the peer with no word from them at all, until we stall.
+  for (let ms = TICK_MS; ms <= PERIOD_MS * 3; ms += TICK_MS) {
+    values.push(match.tickTo(ms));
+    engine.update(values[values.length - 1]);
+  }
+  assert.ok(match.waitingForPeer, "test setup: should be stalled before the partial sync");
+
+  // A partial sync: the peer has advanced, but nowhere near enough to clear
+  // our lead. This is the normal case -- peers report their OWN tick, which
+  // typically advances by one sync period at a time.
+  match.onSync({ t: "sync", tick: 5, lights: 0, state: 0, attacks: [] });
+  values.push(match.tickTo(PERIOD_MS * 3 + TICK_MS));
+  engine.update(values[values.length - 1]);
+
+  // A fuller sync that actually clears the stall.
+  match.onSync({ t: "sync", tick: 400, lights: 0, state: 0, attacks: [] });
+  values.push(match.tickTo(PERIOD_MS * 3 + TICK_MS * 2));
+  engine.update(values[values.length - 1]);
+
+  for (let i = 1; i < values.length; i += 1) {
+    assert.ok(
+      values[i] >= values[i - 1],
+      `tickTo went backwards: ${values[i - 1]} -> ${values[i]} at index ${i}`,
+    );
+  }
+});

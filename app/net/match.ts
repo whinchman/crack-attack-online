@@ -54,19 +54,24 @@ export class MatchController {
    * Returns the value to pass to engine.update().
    */
   tickTo(nowMs: number): number {
+    // Bank stall time on every call, not just at exit, so simulated time is
+    // frozen by construction while stalled: nowMs - stalledMs stays constant
+    // regardless of how many calls or peer syncs land before we resolve.
+    if (this.stallBeganAt !== null) {
+      this.stalledMs += nowMs - this.stallBeganAt;
+      this.stallBeganAt = nowMs;
+    }
+
     const ourTick = Math.floor((nowMs - this.startedAtMs - this.stalledMs) / TICK_MS);
 
     if (ourTick > this.peerTick + MAX_LEAD_TICKS) {
       if (this.stallBeganAt === null) this.stallBeganAt = nowMs;
       this.waitingForPeer = true;
-      return this.startedAtMs + this.stalledMs + (this.peerTick + MAX_LEAD_TICKS) * TICK_MS;
+      return nowMs - this.stalledMs;
     }
 
-    if (this.stallBeganAt !== null) {
-      this.stalledMs += nowMs - this.stallBeganAt;
-      this.stallBeganAt = null;
-      this.waitingForPeer = false;
-    }
+    this.stallBeganAt = null;
+    this.waitingForPeer = false;
 
     const clamped = nowMs - this.stalledMs;
     const reachedTick = Math.floor((clamped - this.startedAtMs) / TICK_MS);
@@ -95,6 +100,9 @@ export class MatchController {
 
   /** Apply a sync received from the peer. */
   onSync(message: SyncMessage): void {
+    // We trust the peer's reported tick outright: a peer that lies and reports
+    // a wildly high tick permanently defeats our stall. That's accepted here —
+    // this is a friends-only game with no anti-cheat requirement.
     this.peerTick = Math.max(this.peerTick, message.tick);
     this.waitingForPeer = false;
     this.engine.setOpponentLevelLights(message.lights);
