@@ -35,7 +35,20 @@ export interface SyncMessage {
   attacks: WireAttack[];
 }
 
-export type ClientMessage = SyncMessage;
+/**
+ * The first thing a client sends on every socket. `resume` distinguishes a
+ * socket-level reconnect from the same live page -- controller intact, board
+ * state intact -- from a fresh page load, which cannot resume anything: board
+ * state is never transferred between peers, only garbage and a tick counter,
+ * so there is nothing to hand a newly loaded page. Only the client can tell
+ * these apart, which is why the relay has to be told.
+ */
+export interface HelloMessage {
+  t: "hello";
+  resume: boolean;
+}
+
+export type ClientMessage = SyncMessage | HelloMessage;
 
 export type ServerMessage =
   | { t: "start"; seed: number; role: "host" | "guest" }
@@ -72,11 +85,7 @@ function parseAttack(raw: unknown): WireAttack | null {
   };
 }
 
-/**
- * Parse an untrusted message from the relay or peer.
- * Returns null rather than throwing, so a malformed peer can never crash us.
- */
-export function parseServerMessage(raw: string): ServerMessage | null {
+function parseJsonObject(raw: string): Record<string, unknown> | null {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -84,7 +93,51 @@ export function parseServerMessage(raw: string): ServerMessage | null {
     return null;
   }
   if (typeof value !== "object" || value === null) return null;
-  const m = value as Record<string, unknown>;
+  return value as Record<string, unknown>;
+}
+
+function parseSync(m: Record<string, unknown>): SyncMessage | null {
+  if (!isUint(m.tick) || !isUint(m.lights) || !isUint(m.state)) return null;
+  if (m.tick > MAX_TICK) return null;
+  if (m.lights >= 2 ** VISIBLE_ROWS) return null;
+  // state: accept a byte of headroom. A strict mask of 3 (STATE_PAUSED|STATE_LOST)
+  // would silently reject valid traffic if someone adds a flag and forgets to update it.
+  if (m.state >= 256) return null;
+  if (!Array.isArray(m.attacks)) return null;
+  const attacks: WireAttack[] = [];
+  // Bound the queue on receive. The original trusts the peer's count here,
+  // which is an out-of-bounds write in the C++. We do not repeat that.
+  for (const entry of m.attacks.slice(0, GARBAGE_QUEUE_SIZE)) {
+    const attack = parseAttack(entry);
+    if (!attack) return null;
+    attacks.push(attack);
+  }
+  return { t: "sync", tick: m.tick, lights: m.lights, state: m.state, attacks };
+}
+
+/**
+ * Parse an untrusted message from a client, for the relay. Kept separate from
+ * parseServerMessage so `hello` -- a handshake the relay consumes and must
+ * never forward -- cannot be mistaken for something a peer may send onward.
+ */
+export function parseClientMessage(raw: string): ClientMessage | null {
+  const m = parseJsonObject(raw);
+  if (!m) return null;
+  if (m.t === "hello") {
+    if (typeof m.resume !== "boolean") return null;
+    return { t: "hello", resume: m.resume };
+  }
+  if (m.t === "sync") return parseSync(m);
+  return null;
+}
+
+/**
+ * Parse an untrusted message from the relay or peer.
+ * Returns null rather than throwing, so a malformed peer can never crash us.
+ */
+export function parseServerMessage(raw: string): ServerMessage | null {
+  const m = parseJsonObject(raw);
+  if (!m) return null;
 
   switch (m.t) {
     case "start":
@@ -100,24 +153,8 @@ export function parseServerMessage(raw: string): ServerMessage | null {
     case "error":
       if (m.reason !== "full" && m.reason !== "missing" && m.reason !== "malformed") return null;
       return { t: "error", reason: m.reason };
-    case "sync": {
-      if (!isUint(m.tick) || !isUint(m.lights) || !isUint(m.state)) return null;
-      if (m.tick > MAX_TICK) return null;
-      if (m.lights >= 2 ** VISIBLE_ROWS) return null;
-      // state: accept a byte of headroom. A strict mask of 3 (STATE_PAUSED|STATE_LOST)
-      // would silently reject valid traffic if someone adds a flag and forgets to update it.
-      if (m.state >= 256) return null;
-      if (!Array.isArray(m.attacks)) return null;
-      const attacks: WireAttack[] = [];
-      // Bound the queue on receive. The original trusts the peer's count here,
-      // which is an out-of-bounds write in the C++. We do not repeat that.
-      for (const entry of m.attacks.slice(0, GARBAGE_QUEUE_SIZE)) {
-        const attack = parseAttack(entry);
-        if (!attack) return null;
-        attacks.push(attack);
-      }
-      return { t: "sync", tick: m.tick, lights: m.lights, state: m.state, attacks };
-    }
+    case "sync":
+      return parseSync(m);
     default:
       return null;
   }

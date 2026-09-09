@@ -201,6 +201,13 @@ export function useMatch(engine: CrackAttackEngine, relayBase: string) {
   // the React state exists only to render from.
   const stateRef = useRef<MatchState>(initial);
   const controllerRef = useRef<MatchController | null>(null);
+  /**
+   * Whether this page has ever been in a running match. It is the difference
+   * between a socket-level reconnect, which the relay can resume, and a fresh
+   * page load, which it cannot: board state is never transferred, so a new
+   * page has nothing to resume onto.
+   */
+  const begunRef = useRef(false);
 
   const commit = useCallback((next: MatchState) => {
     if (next === stateRef.current) return;
@@ -215,6 +222,7 @@ export function useMatch(engine: CrackAttackEngine, relayBase: string) {
     const transport = new Transport(`${relayBase}/room/${room}`);
     const controller = new MatchController(engine, transport);
     controllerRef.current = controller;
+    begunRef.current = false;
 
     commit({
       phase: "waiting",
@@ -235,10 +243,19 @@ export function useMatch(engine: CrackAttackEngine, relayBase: string) {
       commit(settleMatch(stateRef.current, outcome));
     };
 
-    transport.onStatus((status) => commit({ ...stateRef.current, status }));
+    transport.onStatus((status) => {
+      // Sent on every (re)connect, before anything else. setStatus assigns the
+      // new status before invoking handlers, so this goes straight down the
+      // live socket rather than into the outbox behind buffered syncs.
+      if (status === "open") transport.send({ t: "hello", resume: begunRef.current });
+      commit({ ...stateRef.current, status });
+    });
     transport.onMessage((message) => {
       const { state: next, effects } = reduceMatch(stateRef.current, message);
-      if (effects.begin) controller.begin(effects.begin, performance.now());
+      if (effects.begin) {
+        begunRef.current = true;
+        controller.begin(effects.begin, performance.now());
+      }
       if (effects.sync) controller.onSync(effects.sync);
       if (effects.winLocally) engine.forfeitWin(performance.now());
       if (effects.closeTransport) transport.close();

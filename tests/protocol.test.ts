@@ -5,6 +5,7 @@ import {
   SYNC_PERIOD_TICKS,
   TICK_MS,
   MAX_TICK,
+  parseClientMessage,
   parseServerMessage,
 } from "../app/net/protocol.ts";
 import { BOARD_COLUMNS, VISIBLE_ROWS } from "../app/game/engine.ts";
@@ -180,4 +181,33 @@ test("accepts state at 255 boundary", () => {
   }));
   assert.equal(msg?.t, "sync");
   assert.equal(msg.t === "sync" && msg.state, 255);
+});
+
+// --- the hello handshake ------------------------------------------------
+
+test("parses a hello in both directions of the resume flag", () => {
+  assert.deepEqual(parseClientMessage('{"t":"hello","resume":false}'), { t: "hello", resume: false });
+  assert.deepEqual(parseClientMessage('{"t":"hello","resume":true}'), { t: "hello", resume: true });
+});
+
+test("rejects a hello whose resume flag is not a boolean", () => {
+  assert.equal(parseClientMessage('{"t":"hello","resume":"yes"}'), null);
+  assert.equal(parseClientMessage('{"t":"hello","resume":1}'), null);
+  assert.equal(parseClientMessage('{"t":"hello"}'), null);
+});
+
+test("parseClientMessage still accepts syncs and rejects everything else", () => {
+  const sync = '{"t":"sync","tick":32,"lights":0,"state":0,"attacks":[]}';
+  assert.equal(parseClientMessage(sync)?.t, "sync");
+  // Server-only messages must never be accepted from a client, or a peer
+  // could inject a "start" or a "forfeit" through the relay.
+  assert.equal(parseClientMessage('{"t":"start","seed":1,"role":"host"}'), null);
+  assert.equal(parseClientMessage('{"t":"forfeit"}'), null);
+  assert.equal(parseClientMessage('{"t":"error","reason":"missing"}'), null);
+  assert.equal(parseClientMessage("not json"), null);
+  assert.equal(parseClientMessage("[]"), null);
+});
+
+test("a hello is not a server message, so the relay can never forward one", () => {
+  assert.equal(parseServerMessage('{"t":"hello","resume":true}'), null);
 });
