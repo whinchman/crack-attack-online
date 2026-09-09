@@ -351,6 +351,8 @@ export default function CrackAttackGame() {
   const [visualReady, setVisualReady] = useState(false);
   const [touchControlsAvailable, setTouchControlsAvailable] = useState(false);
   const [thumbpadVisual, setThumbpadVisual] = useState<ThumbpadVisual>(IDLE_THUMBPAD_VISUAL);
+  const [challengeError, setChallengeError] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const ensureAudio = useCallback(() => {
     if (!audioRef.current) {
@@ -542,9 +544,39 @@ export default function CrackAttackGame() {
   }, [engine]);
 
   const createChallenge = useCallback(async () => {
-    const response = await fetch(`${RELAY_BASE.replace(/^wss:/, "https:")}/new`);
-    const { room } = (await response.json()) as { room: string };
-    window.location.href = challengeUrl(window.location.href, room);
+    setChallengeError(null);
+    try {
+      const relayHttpBase = RELAY_BASE.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+      const response = await fetch(`${relayHttpBase}/new`);
+      if (!response.ok) throw new Error(`relay responded with ${response.status}`);
+      const { room } = (await response.json()) as { room: string };
+      window.location.href = challengeUrl(window.location.href, room);
+      // Assigning a fragment-only href does not by itself trigger a
+      // navigation/reload, so the explicit reload() below is required to
+      // actually leave solo mode and construct the engine as multiplayer.
+      window.location.reload();
+    } catch {
+      setChallengeError("Couldn't reach the server — try again");
+    }
+  }, []);
+
+  const copyChallengeLink = useCallback(() => {
+    if (!match.link) return;
+    navigator.clipboard?.writeText(match.link).then(
+      () => {
+        setLinkCopied(true);
+        window.setTimeout(() => setLinkCopied(false), 2000);
+      },
+      () => {},
+    );
+  }, [match.link]);
+
+  const playAgain = useCallback(() => {
+    const href = window.location.href;
+    const base = href.includes("#") ? href.slice(0, href.indexOf("#")) : href;
+    window.location.href = base;
+    // As above: the fragment-stripping assignment alone doesn't reload, so
+    // the explicit reload() is required to drop back into solo mode.
     window.location.reload();
   }, []);
 
@@ -1072,19 +1104,21 @@ export default function CrackAttackGame() {
             <div className="game-overlay">
               <p>Waiting for your opponent…</p>
               <p className="challenge-link">{match.link}</p>
-              <button
-                type="button"
-                className="original-screen-action"
-                onClick={() => navigator.clipboard.writeText(match.link ?? "")}
-              >
-                Copy challenge link
+              <button type="button" className="original-screen-action" onClick={copyChallengeLink}>
+                {linkCopied ? "Copied!" : "Copy challenge link"}
               </button>
               <p className="keyboard-hint">Keep this tab open — the link dies if you close it.</p>
             </div>
           )}
 
+          {match.status === "reconnecting" && (match.phase === "playing" || match.phase === "waiting") && (
+            <div className="game-overlay game-overlay--passthrough">
+              <p>Connection lost — reconnecting…</p>
+            </div>
+          )}
+
           {match.phase === "peer-gone" && (
-            <div className="game-overlay">
+            <div className="game-overlay game-overlay--passthrough">
               <p>Your opponent dropped out.</p>
               <p className="keyboard-hint">Waiting 30 seconds for them to come back…</p>
             </div>
@@ -1095,14 +1129,19 @@ export default function CrackAttackGame() {
               <p>{match.outcome === "forfeit"
                 ? "Your opponent didn't come back. You win."
                 : "Match over."}</p>
-              <p className="keyboard-hint">Create a new challenge link to play again.</p>
+              <button type="button" className="original-screen-action" onClick={playAgain}>
+                Play again
+              </button>
             </div>
           )}
 
-          {match.phase === "solo" && (
-            <button type="button" className="original-screen-action" onClick={createChallenge}>
-              Challenge a friend
-            </button>
+          {match.phase === "solo" && snapshot.status === "ready" && (
+            <>
+              <button type="button" className="original-screen-action" onClick={createChallenge}>
+                Challenge a friend
+              </button>
+              {challengeError && <p className="keyboard-hint">{challengeError}</p>}
+            </>
           )}
         </div>
 

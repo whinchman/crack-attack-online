@@ -167,6 +167,15 @@ canvas:focus-visible {
   inset: 0;
 }
 
+/*
+ * For overlays shown while the board may still be live (peer-gone grace
+ * period, a reconnecting transport): informational only, no buttons, so
+ * touches must fall through to the board underneath instead of being eaten.
+ */
+.game-overlay--passthrough {
+  pointer-events: none;
+}
+
 .challenge-link {
   font-family: ui-monospace, monospace;
   word-break: break-all;
