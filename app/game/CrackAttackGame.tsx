@@ -61,7 +61,16 @@ function matchOverCopy(outcome: MatchOutcome): string {
 }
 
 const ASSET_LOAD_TIMEOUT_MS = 8000;
-const RELAY_BASE = import.meta.env.VITE_RELAY_BASE ?? "wss://crack-attack-relay.workers.dev";
+// Deliberately unresolvable. .invalid is reserved by RFC 2606 and can never
+// be registered, so a build that shipped without VITE_RELAY_BASE fails fast
+// and reads as intentional in devtools, instead of silently pointing at
+// "wss://crack-attack-relay.workers.dev" -- which is not even a valid
+// workers.dev hostname (those are <worker>.<account>.workers.dev) and so
+// looked plausible while being unreachable. Failing at module load instead
+// was rejected: solo play needs no relay at all and must not be taken down by
+// a misconfigured multiplayer option, and a blank page is not a clear
+// message. Transport gives up after a few attempts and the overlay says so.
+const RELAY_BASE = import.meta.env.VITE_RELAY_BASE ?? "wss://relay-not-configured.invalid";
 const THUMBPAD_STEP_PX = 24;
 const THUMBPAD_PUCK_RANGE_PX = 17;
 const BOARD_SWIPE_THRESHOLD = CELL_SIZE * 0.42;
@@ -1164,6 +1173,19 @@ export default function CrackAttackGame() {
                 {linkCopied ? "Copied!" : "Copy challenge link"}
               </button>
               <p className="overlay-note">Keep this tab open — the link dies if you close it.</p>
+            </div>
+          )}
+
+          {overlay === "unreachable" && (
+            <div className="game-overlay">
+              <p>Can&rsquo;t reach the game server.</p>
+              <p className="overlay-note">
+                This link may be too old, or the game may be set up wrong. Ask
+                your friend to send a fresh one.
+              </p>
+              <button type="button" className="overlay-action" onClick={playAgain}>
+                Play on your own
+              </button>
             </div>
           )}
 

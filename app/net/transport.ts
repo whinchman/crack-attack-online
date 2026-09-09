@@ -1,8 +1,36 @@
-import { parseServerMessage } from "./protocol.ts";
+import { RECONNECT_GRACE_MS, parseServerMessage } from "./protocol.ts";
 import type { ClientMessage, ServerMessage } from "./protocol.ts";
 
-export type TransportStatus = "connecting" | "open" | "reconnecting" | "closed";
+export type TransportStatus =
+  | "connecting"
+  | "open"
+  | "reconnecting"
+  | "closed"
+  /** Given up: retrying further cannot help, and the caller should say so. */
+  | "failed";
 export type SocketFactory = (url: string) => WebSocket;
+
+/**
+ * Consecutive failed attempts before we give up, kept deliberately different
+ * for the two cases they describe.
+ *
+ * Never having connected at all means the URL is wrong, the relay is down, or
+ * the build shipped without VITE_RELAY_BASE. Retrying that once a second
+ * forever tells the player nothing and drains their phone, so give up quickly
+ * and let the UI say what happened.
+ *
+ * Having connected and then dropped is an ordinary blip and deserves patience
+ * -- but only up to the relay's own reconnect grace window, since past that
+ * the room is reaped and no reconnect can succeed anyway.
+ */
+export const MAX_INITIAL_ATTEMPTS = 5;
+export const MAX_RECONNECT_ATTEMPTS = Math.ceil(RECONNECT_GRACE_MS / 1_000);
+
+/**
+ * Cap on messages buffered while the socket is down. Syncs are only useful
+ * fresh, and once the transport has given up nothing will ever drain them.
+ */
+const OUTBOX_LIMIT = 64;
 
 /**
  * A WebSocket that reconnects on unexpected close and buffers sends made
@@ -24,6 +52,8 @@ export class Transport {
   private deliberateClose = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private socketGeneration = 0;
+  private everOpened = false;
+  private failedAttempts = 0;
   private url: string;
   private factory: SocketFactory;
   private reconnectDelayMs: number;
@@ -52,6 +82,8 @@ export class Transport {
 
     socket.onopen = () => {
       if (this.socketGeneration !== generation) return;
+      this.everOpened = true;
+      this.failedAttempts = 0;
       this.setStatus("open");
       for (const queued of this.outbox.splice(0)) socket.send(queued);
     };
@@ -75,6 +107,14 @@ export class Transport {
   private handleDrop(): void {
     if (this.deliberateClose) return;
     if (this.retryTimer !== null) return;
+    this.failedAttempts += 1;
+    const limit = this.everOpened ? MAX_RECONNECT_ATTEMPTS : MAX_INITIAL_ATTEMPTS;
+    if (this.failedAttempts >= limit) {
+      // Stop opening sockets entirely. handleDrop cannot fire again because
+      // nothing further is opened, so no extra flag is needed to hold this.
+      this.setStatus("failed");
+      return;
+    }
     this.setStatus("reconnecting");
     if (this.reconnectDelayMs === 0) {
       this.open();
@@ -89,7 +129,7 @@ export class Transport {
   send(message: ClientMessage): void {
     const raw = JSON.stringify(message);
     if (this.socket && this.status === "open") this.socket.send(raw);
-    else this.outbox.push(raw);
+    else if (this.outbox.length < OUTBOX_LIMIT) this.outbox.push(raw);
   }
 
   onMessage(handler: (m: ServerMessage) => void): void {

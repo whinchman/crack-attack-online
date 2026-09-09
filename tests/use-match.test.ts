@@ -108,12 +108,14 @@ test("a dropped socket outranks the stall it causes, so only one overlay shows",
 
 test("every match state resolves to exactly one overlay", () => {
   const phases: MatchPhase[] = ["solo", "waiting", "playing", "peer-gone", "over"];
-  const statuses: (MatchState["status"])[] = [null, "connecting", "open", "reconnecting", "closed"];
+  const statuses: (MatchState["status"])[] = [
+    null, "connecting", "open", "reconnecting", "closed", "failed",
+  ];
   const expected: Record<MatchPhase, string[]> = {
     solo: ["none"],
-    waiting: ["waiting"],
-    playing: ["none", "reconnecting", "waiting-peer"],
-    "peer-gone": ["peer-gone"],
+    waiting: ["waiting", "unreachable"],
+    playing: ["none", "reconnecting", "waiting-peer", "unreachable"],
+    "peer-gone": ["peer-gone", "unreachable"],
     over: ["over"],
   };
   for (const phase of phases) {
@@ -144,4 +146,15 @@ test("pause and solo restart keep working in solo play", () => {
   assert.equal(soloControls("solo", "ready", false).canPause, false);
   assert.equal(soloControls("solo", "gameover", true).canRestart, true);
   assert.equal(soloControls("solo", "gameover", false).canRestart, false);
+});
+
+test("a socket that has given up says so instead of leaving the waiting card up", () => {
+  // FINAL-11: a build without VITE_RELAY_BASE left the joiner staring at
+  // "Waiting for your opponent…" while the socket retried invisibly forever.
+  assert.equal(matchOverlay({ ...PLAYING, phase: "waiting", status: "failed" }), "unreachable");
+  assert.equal(matchOverlay({ ...PLAYING, status: "failed" }), "unreachable");
+  // A settled result still wins: the match is already decided.
+  assert.equal(
+    matchOverlay({ ...PLAYING, phase: "over", outcome: "win", status: "failed" }), "over",
+  );
 });

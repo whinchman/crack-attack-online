@@ -62,6 +62,7 @@ export type MatchOverlay =
   | "none"
   | "waiting"
   | "reconnecting"
+  | "unreachable"
   | "waiting-peer"
   | "peer-gone"
   | "over";
@@ -74,6 +75,13 @@ export type MatchOverlay =
  * of a coincidence between booleans.
  */
 export function matchOverlay(state: MatchState): MatchOverlay {
+  if (state.phase !== "solo" && state.phase !== "over" && state.status === "failed") {
+    // Outranks everything below. Nothing on this page can progress, and the
+    // waiting card would otherwise sit there forever claiming an opponent is
+    // on the way -- which is exactly what a build shipped without a relay URL
+    // looks like to whoever taps the link.
+    return "unreachable";
+  }
   switch (state.phase) {
     case "solo": return "none";
     case "over": return "over";
