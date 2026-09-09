@@ -130,5 +130,5 @@ jobs:
           source-dir: dist-pages
           preview-branch: gh-pages
           umbrella-dir: pr-preview
-          pages-base-url: leifkb.github.io/crack-attack-browser
+          pages-base-url: whinchman.github.io/crack-attack-online
           qr-code: false

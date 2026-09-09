@@ -72,12 +72,12 @@ from a branch`, using `/ (root)` on `gh-pages`.
 
 **The production deploy is gated on the `VITE_RELAY_BASE` repository variable
 being set.** Until it is, pushes to `main` are validated but not published:
-the game's live home is Cloudflare Pages, and a second URL whose multiplayer
-silently cannot work is worse than none. Set that variable to whichever relay
+the game's live home is https://crackattack.217industries.com, and a second
+URL whose multiplayer silently cannot work is worse than none. Set that variable to whichever relay
 that site should talk to, and pushes to `main` publish again.
 
 Pull requests opened from branches in this repository get an automatic preview
-at `https://leifkb.github.io/crack-attack-browser/pr-preview/pr-N/`, where `N`
+at `https://whinchman.github.io/crack-attack-online/pr-preview/pr-N/`, where `N`
 is the pull request number. The workflow posts the link in a sticky pull request
 comment, updates the preview after every push, and removes it when the pull
 request closes. Fork pull requests are validated but are not deployed because
