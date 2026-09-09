@@ -101,3 +101,8 @@ test("a never-paired host leaving still expires the room immediately, with no gr
   room.removePeer("a", 100);
   assert.equal(room.expiredAt(100 + RECONNECT_GRACE_MS + 1), true);
 });
+
+test("a brand-new room that nobody has joined yet is not expired", () => {
+  const room = new RoomLogic(1);
+  assert.equal(room.expiredAt(Date.now()), false);
+});

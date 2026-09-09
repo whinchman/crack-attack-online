@@ -11,6 +11,7 @@ export class RoomLogic {
   readonly seed: number;
   private peers = new Map<string, Role>();
   private emptiedAt: number | null = null;
+  private everJoined = false;
   private everPaired = false;
 
   constructor(seed: number) {
@@ -35,6 +36,7 @@ export class RoomLogic {
     const role: Role = this.peers.size === 0 ? "host" : "guest";
     this.peers.set(id, role);
     this.emptiedAt = null;
+    this.everJoined = true;
     if (this.peers.size === 2) this.everPaired = true;
     return role;
   }
@@ -45,12 +47,15 @@ export class RoomLogic {
   }
 
   /**
-   * A room that was never paired dies as soon as it empties out — a live-only
-   * challenge link has no match to preserve. A room that has been paired stays
-   * alive across any departure (one peer or both) until the reconnect grace
-   * window elapses, regardless of how many peers are currently present.
+   * A brand-new room that nobody has ever joined is alive — it is waiting for
+   * its host, not abandoned. A room that was joined but never paired dies as
+   * soon as it empties out — a live-only challenge link has no match to
+   * preserve. A room that has been paired stays alive across any departure
+   * (one peer or both) until the reconnect grace window elapses, regardless
+   * of how many peers are currently present.
    */
   expiredAt(nowMs: number): boolean {
+    if (!this.everJoined) return false;
     if (!this.everPaired) return this.peers.size === 0;
     if (this.emptiedAt === null) return false;
     return nowMs - this.emptiedAt > RECONNECT_GRACE_MS;

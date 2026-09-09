@@ -11,8 +11,18 @@ export class Room {
   private roles = new Map<string, Role>();
   /** False until the first pairing has sent "start"; true for later rejoins. */
   private rejoin = false;
+  private state: DurableObjectState;
+  private env: Env;
 
-  constructor(private state: DurableObjectState, private env: Env) {}
+  // Plain fields assigned in the constructor body, not TS parameter-property
+  // shorthand: node --experimental-strip-types only erases types, it doesn't
+  // transform parameter properties, so `constructor(private state: ...)`
+  // fails to load at runtime under the exact command this project's test
+  // scripts use.
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.env = env;
+  }
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") {

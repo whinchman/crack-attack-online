@@ -9,5 +9,5 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "../app/net/protocol.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "../app/net/protocol.ts"]
 }
