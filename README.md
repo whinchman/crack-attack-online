@@ -38,13 +38,43 @@ npm run dev
 
 Run the simulation and rendering regression tests with `npm run test`.
 
+## Two-player online
+
+Two friends play from one link. A Cloudflare Worker in `relay/` pairs two
+WebSockets per room and mints a shared RNG seed; both peers seed identically so
+the block sequences match, and each simulates only its own board, exchanging
+queued garbage and a tick counter every 32 ticks.
+
+The client needs the relay's address at BUILD time, in `VITE_RELAY_BASE`:
+
+```sh
+echo 'VITE_RELAY_BASE=wss://<worker>.<account>.workers.dev' > .env.production
+npm run build
+grep -o 'wss://[^"]*' dist-pages/assets/*.js   # confirm it was baked in
+```
+
+It is a public URL, not a secret — it ships in the client bundle. Without it
+the build falls back to `wss://relay-not-configured.invalid`, which can never
+resolve, and the game says "Can't reach the game server" rather than retrying
+invisibly. Solo play works with no relay at all.
+
+The challenge link is live only: it works while the host keeps their tab open,
+and a closed tab cannot be resumed, because peers exchange garbage and a tick
+counter but never board state.
+
 ## GitHub Pages
 
 The repository includes a separate, fully static Vite build for GitHub Pages.
 It uses relative URLs so forks and project sites work beneath any repository
-path. Every push to `main` runs the tests and publishes `dist-pages` through
-the workflow in `.github/workflows/pages.yml`. The repository's Pages source is
-configured as `Deploy from a branch`, using `/ (root)` on `gh-pages`.
+path. The workflow in `.github/workflows/pages.yml` runs the tests on every
+push and pull request. The repository's Pages source is configured as `Deploy
+from a branch`, using `/ (root)` on `gh-pages`.
+
+**The production deploy is gated on the `VITE_RELAY_BASE` repository variable
+being set.** Until it is, pushes to `main` are validated but not published:
+the game's live home is Cloudflare Pages, and a second URL whose multiplayer
+silently cannot work is worse than none. Set that variable to whichever relay
+that site should talk to, and pushes to `main` publish again.
 
 Pull requests opened from branches in this repository get an automatic preview
 at `https://leifkb.github.io/crack-attack-browser/pr-preview/pr-N/`, where `N`

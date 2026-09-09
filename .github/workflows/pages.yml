@@ -43,7 +43,13 @@ jobs:
         run: npm run lint
 
       - name: Build static game
+        # The relay URL is public -- it ships in the client bundle -- so this
+        # is a repository variable, not a secret. Leaving it unset makes the
+        # build fall back to an unresolvable placeholder, which is why the
+        # production deploy below refuses to run without it.
         run: npm run build
+        env:
+          VITE_RELAY_BASE: ${{ vars.VITE_RELAY_BASE }}
 
       - name: Validate static artifact
         run: npm run validate
@@ -56,7 +62,14 @@ jobs:
           retention-days: 1
 
   deploy-production:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # Gated on the relay URL being configured. Without it this workflow would
+    # publish a second live site whose multiplayer cannot work, while the
+    # README advertised it as canonical -- two URLs for the same game, one of
+    # them broken, for an audience of six friends sharing links in Discord.
+    # Set the VITE_RELAY_BASE repository variable to enable it.
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      vars.VITE_RELAY_BASE != ''
     needs: validate
     runs-on: ubuntu-latest
     steps:

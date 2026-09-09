@@ -70,7 +70,10 @@ const ASSET_LOAD_TIMEOUT_MS = 8000;
 // was rejected: solo play needs no relay at all and must not be taken down by
 // a misconfigured multiplayer option, and a blank page is not a clear
 // message. Transport gives up after a few attempts and the overlay says so.
-const RELAY_BASE = import.meta.env.VITE_RELAY_BASE ?? "wss://relay-not-configured.invalid";
+// `??` is not enough: an env var that is present but empty -- which is what a
+// CI `env:` block wired to an unset repository variable produces -- is a
+// string, not undefined, and would resolve to "/room/ABC123".
+const RELAY_BASE = import.meta.env.VITE_RELAY_BASE?.trim() || "wss://relay-not-configured.invalid";
 const THUMBPAD_STEP_PX = 24;
 const THUMBPAD_PUCK_RANGE_PX = 17;
 const BOARD_SWIPE_THRESHOLD = CELL_SIZE * 0.42;
