@@ -363,14 +363,14 @@ git commit -m "feat(net): wire protocol types and validating parser"
 ## Task 3: Room Durable Object
 
 **Files:**
-- Create: `relay/src/room.ts`, `relay/src/index.ts`, `relay/wrangler.toml`, `relay/package.json`, `relay/tsconfig.json`
+- Create: `relay/src/room-logic.ts`, `relay/src/durable-room.ts`, `relay/src/index.ts`, `relay/wrangler.toml`, `relay/package.json`, `relay/tsconfig.json`
 - Test: `tests/room-logic.test.ts`
 
 **Interfaces:**
 - Consumes: `parseServerMessage`, `RECONNECT_GRACE_MS` from `app/net/protocol.ts`.
-- Produces: `RoomLogic` class with `addPeer(id): "host" | "guest" | "full"`, `removePeer(id, atMs)`, `expiredAt(nowMs): boolean`, `seed: number`, `peerCount: number`.
+- Produces: `RoomLogic` class (from `relay/src/room-logic.ts`) with `addPeer(id): "host" | "guest" | "full"`, `removePeer(id, atMs)`, `expiredAt(nowMs): boolean`, `wasPaired: boolean`, `paired: boolean`, `seed: number`, `peerCount: number`. Plus the `Room` Durable Object class from `relay/src/durable-room.ts`.
 
-The Durable Object itself is thin glue around `RoomLogic`, which is pure and unit-testable without Workers runtime.
+**MANDATORY file split (controller Ruling 9).** `RoomLogic` is pure and lives in `relay/src/room-logic.ts`. The `Room` Durable Object — which references Workers-only globals (`DurableObjectState`, `DurableObjectNamespace`, `WebSocketPair`) — lives separately in `relay/src/durable-room.ts`. This is not optional and not a style preference: `tsconfig.pages.json` now typechecks `tests/**`, and its `types` array is `["vite/client", "node"]` with no Workers types. A test importing a module that references `DurableObjectState` would fail `npm run typecheck`. Keeping the pure half in its own file means `tests/room-logic.test.ts` never pulls Workers types into the pages program.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -379,7 +379,7 @@ Create `tests/room-logic.test.ts`:
 ```ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { RoomLogic } from "../relay/src/room.ts";
+import { RoomLogic } from "../relay/src/room-logic.ts";
 import { RECONNECT_GRACE_MS } from "../app/net/protocol.ts";
 
 test("first peer is host, second is guest", () => {
@@ -454,10 +454,10 @@ Expected: FAIL — cannot find module `../relay/src/room.ts`.
 
 - [ ] **Step 3: Write `RoomLogic` and the Durable Object**
 
-Create `relay/src/room.ts`:
+Create `relay/src/room-logic.ts` — the PURE half, no Workers types anywhere:
 
 ```ts
-import { RECONNECT_GRACE_MS, parseServerMessage } from "../../app/net/protocol.ts";
+import { RECONNECT_GRACE_MS } from "../../app/net/protocol.ts";
 
 export type Role = "host" | "guest";
 
@@ -515,6 +515,14 @@ export class RoomLogic {
     return nowMs - this.emptiedAt > RECONNECT_GRACE_MS;
   }
 }
+
+```
+
+Then create `relay/src/durable-room.ts` — the Workers half. Note it imports `RoomLogic` from the pure module and `parseServerMessage` from the protocol:
+
+```ts
+import { RoomLogic } from "./room-logic.ts";
+import { RECONNECT_GRACE_MS, parseServerMessage } from "../../app/net/protocol.ts";
 
 interface Env {
   ROOM: DurableObjectNamespace;
@@ -609,7 +617,7 @@ export class Room {
 Create `relay/src/index.ts`:
 
 ```ts
-export { Room } from "./room.ts";
+export { Room } from "./durable-room.ts";
 
 interface Env {
   ROOM: DurableObjectNamespace;
@@ -698,7 +706,7 @@ Create `relay/tsconfig.json`:
 Run: `node --experimental-strip-types --test tests/room-logic.test.ts`
 Expected: PASS, 8 tests.
 
-Note: `room.ts` imports Workers globals (`WebSocketPair`, `DurableObjectState`) that do not exist in Node. Because the test only imports `RoomLogic` and those globals are referenced inside class bodies rather than at module scope, the import succeeds. If Node errors on the `DurableObjectNamespace` type reference, move the `Room` class into `relay/src/durable-room.ts` and keep `room.ts` pure, updating the import in `relay/src/index.ts` accordingly.
+Because `RoomLogic` lives in its own Workers-free module, this test imports only pure TypeScript — no Workers globals enter the Node test run or the pages typecheck program.
 
 - [ ] **Step 5: Commit**
 
