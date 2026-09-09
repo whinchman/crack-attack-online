@@ -1409,14 +1409,19 @@ export function drawOpponentLights(
   snapshot: GameSnapshot,
 ): void {
   const bits = snapshot.opponentLevelLights ?? 0;
+  // Solo play leaves this zero and must draw nothing at all.
   if (bits === 0) return;
   const lampWidth = 14;
   const lampHeight = Math.floor(CELL_SIZE * 0.5);
   const x = BOARD_X + BOARD_WIDTH + 18;
+  // Mirror the local column exactly: occupied rows red, unoccupied blue, full
+  // height every frame so the opponent's stack reads against a fixed scale.
+  // Reuse LEVEL_LIGHT_RED / LEVEL_LIGHT_BLUE from renderGeometry.ts so the two
+  // columns cannot drift apart. Do NOT invent a height-based danger threshold —
+  // the local column has none, and one here would read as safety at half full.
   for (let row = 0; row < VISIBLE_ROWS; row += 1) {
-    if ((bits & (1 << row)) === 0) continue;
-    const danger = row >= VISIBLE_ROWS - 3;
-    context.fillStyle = danger ? "#FF0000" : "#3333CC";
+    const occupied = (bits & (1 << row)) !== 0;
+    context.fillStyle = occupied ? levelLightRedCss : levelLightBlueCss;
     const y = BOARD_BOTTOM - (row + 1) * CELL_SIZE + (CELL_SIZE - lampHeight) / 2;
     context.fillRect(x, y, lampWidth, lampHeight);
   }
