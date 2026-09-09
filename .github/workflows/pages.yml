@@ -34,19 +34,19 @@ jobs:
         run: npm ci
 
       - name: Run engine and rendering tests
-        run: npm run test:engine
+        run: npm run test
 
       - name: Type-check the static game
-        run: npm run typecheck:pages
+        run: npm run typecheck
 
       - name: Lint source
         run: npm run lint
 
       - name: Build static game
-        run: npm run build:pages
+        run: npm run build
 
       - name: Validate static artifact
-        run: npm run validate:pages
+        run: npm run validate
 
       - name: Upload built site
         uses: actions/upload-artifact@v4

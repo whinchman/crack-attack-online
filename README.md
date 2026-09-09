@@ -36,7 +36,7 @@ npm ci
 npm run dev
 ```
 
-Run the simulation and rendering regression tests with `npm run test:engine`.
+Run the simulation and rendering regression tests with `npm run test`.
 
 ## GitHub Pages
 
@@ -56,14 +56,13 @@ their workflow tokens are intentionally read-only.
 To verify the Pages artifact locally:
 
 ```sh
-npm run build:pages
-npm run validate:pages
+npm run build
+npm run validate
 ```
 
 For a browser-hosted development preview, open the repository or a pull request
 in StackBlitz. The checked-in `.stackblitzrc` automatically starts the static
-Pages entry point with `npm run dev:pages` instead of the Cloudflare development
-runtime used by the main `dev` script.
+Pages entry point with `npm run dev`.
 
 ## Controls
 
