@@ -115,6 +115,24 @@ export function soloControls(
   };
 }
 
+/**
+ * What the match-over overlay says. Every reason a match can end gets its own
+ * sentence: "Match over." on a dead link tells a player nothing about what to
+ * do next, and this audience is six friends on phones, not developers reading
+ * a console. Lives here rather than in the component so it can be tested
+ * against the state that produces it.
+ */
+export function matchOverCopy(outcome: MatchOutcome): string {
+  switch (outcome) {
+    case "win": return "You win! Your opponent topped out.";
+    case "loss": return "You topped out. Your opponent wins.";
+    case "forfeit": return "Your opponent didn't come back. You win.";
+    case "expired": return "This challenge link has expired.";
+    case "full": return "That game already has two players.";
+    default: return "Match over.";
+  }
+}
+
 /** Settle the match, unless a result is already settled. "over" is terminal. */
 export function settleMatch(state: MatchState, outcome: MatchOutcome): MatchState {
   if (state.phase === "over") return state;
@@ -138,6 +156,13 @@ export interface MatchEffects {
    */
   winLocally: boolean;
   /**
+   * Stop the controller. A settled match must not go on ticking: it would keep
+   * stalling, keep transmitting into a socket that is about to close, and --
+   * because the forfeit winner's own engine is now "gameover" -- emitSync
+   * would read that as a loss and try to invert the result.
+   */
+  endMatch: boolean;
+  /**
    * Close our end of the socket. The relay closes its end straight after any
    * terminal message; without this, Transport reads that as an unexpected drop
    * and reconnects once a second forever, draining the phone and replacing the
@@ -147,8 +172,11 @@ export interface MatchEffects {
 }
 
 const NO_EFFECTS: MatchEffects = {
-  begin: null, sync: null, winLocally: false, closeTransport: false,
+  begin: null, sync: null, winLocally: false, endMatch: false, closeTransport: false,
 };
+
+/** Effects for a message that ends the match, whatever the state it lands in. */
+const TERMINAL: MatchEffects = { ...NO_EFFECTS, endMatch: true, closeTransport: true };
 
 /**
  * Fold a server message into the match state. Pure: the caller performs the
@@ -175,19 +203,92 @@ export function reduceMatch(
       if (state.phase !== "peer-gone") return { state, effects: NO_EFFECTS };
       return { state: { ...state, phase: "playing" }, effects: NO_EFFECTS };
     case "forfeit":
-      if (state.phase === "over") return { state, effects: { ...NO_EFFECTS, closeTransport: true } };
+      if (state.phase === "over") return { state, effects: TERMINAL };
       return {
         state: settleMatch(state, "forfeit"),
-        effects: { ...NO_EFFECTS, winLocally: true, closeTransport: true },
+        effects: { ...TERMINAL, winLocally: true },
       };
     case "error":
       // A late error must never clobber a win screen with "Match over."
-      if (state.phase === "over") return { state, effects: { ...NO_EFFECTS, closeTransport: true } };
+      if (state.phase === "over") return { state, effects: TERMINAL };
       return {
         state: settleMatch(state, errorOutcome(message.reason)),
-        effects: { ...NO_EFFECTS, closeTransport: true },
+        effects: TERMINAL,
       };
   }
+}
+
+/**
+ * The collaborators the message handler drives, as narrow structural types
+ * rather than the concrete classes. This is the seam: the handler used to live
+ * inline in an effect inside a hook, reachable only through a React renderer
+ * and a live WebSocket, and that is exactly where the F9 wiring bug survived
+ * a fix wave that tested everything around it.
+ */
+export interface MatchWiring {
+  getState(): MatchState;
+  commit(next: MatchState): void;
+  begin(start: MatchStart): void;
+  applySync(sync: SyncMessage): void;
+  winLocally(): void;
+  endMatch(): void;
+  closeTransport(): void;
+}
+
+/**
+ * Apply one server message: compute the effects from the current state,
+ * perform them, then re-derive the state from whatever they left behind.
+ *
+ * The two reductions are not redundant. Effects can settle the match out from
+ * under us -- `applySync` on a peer's STATE_LOST is a WIN for us and commits
+ * "over" -- and `closeTransport` commits a status change of its own. Reducing
+ * once up front and committing that result would write the pre-effect state
+ * back over both, which is the bug this shape exists to prevent: the winner
+ * ended at phase "playing" with outcome null, looking at a solo game-over card
+ * with its restart disabled and no way out but a reload.
+ *
+ * Guarding instead on "did the state change while the effects ran" does not
+ * work: closeTransport legitimately changes it on the forfeit and error paths,
+ * so that guard drops their own "over" transition and trades one bug for
+ * another.
+ */
+export function handleServerMessage(wiring: MatchWiring, message: ServerMessage): void {
+  const { effects } = reduceMatch(wiring.getState(), message);
+  if (effects.begin) wiring.begin(effects.begin);
+  if (effects.sync) wiring.applySync(effects.sync);
+  if (effects.winLocally) wiring.winLocally();
+  if (effects.endMatch) wiring.endMatch();
+  if (effects.closeTransport) wiring.closeTransport();
+  wiring.commit(reduceMatch(wiring.getState(), message).state);
+}
+
+/**
+ * The wiring the hook actually runs on. Exported so a test drives the real
+ * MatchController and CrackAttackEngine through the same code path the hook
+ * does, rather than a paraphrase of it that can drift.
+ */
+export function liveWiring(options: {
+  engine: Pick<CrackAttackEngine, "forfeitWin">;
+  controller: Pick<MatchController, "begin" | "onSync" | "end" | "engineTime">;
+  transport: Pick<Transport, "close">;
+  getState(): MatchState;
+  commit(next: MatchState): void;
+  markBegun(): void;
+  now(): number;
+}): MatchWiring {
+  const { engine, controller, transport, getState, commit, markBegun, now } = options;
+  return {
+    getState,
+    commit,
+    begin: (start) => {
+      markBegun();
+      controller.begin(start, now());
+    },
+    applySync: (sync) => controller.onSync(sync),
+    winLocally: () => engine.forfeitWin(controller.engineTime(now())),
+    endMatch: () => controller.end(),
+    closeTransport: () => transport.close(),
+  };
 }
 
 export function useMatch(engine: CrackAttackEngine, relayBase: string) {
@@ -250,17 +351,16 @@ export function useMatch(engine: CrackAttackEngine, relayBase: string) {
       if (status === "open") transport.send({ t: "hello", resume: begunRef.current });
       commit({ ...stateRef.current, status });
     });
-    transport.onMessage((message) => {
-      const { state: next, effects } = reduceMatch(stateRef.current, message);
-      if (effects.begin) {
-        begunRef.current = true;
-        controller.begin(effects.begin, performance.now());
-      }
-      if (effects.sync) controller.onSync(effects.sync);
-      if (effects.winLocally) engine.forfeitWin(controller.engineTime(performance.now()));
-      if (effects.closeTransport) transport.close();
-      commit(next);
+    const wiring = liveWiring({
+      engine,
+      controller,
+      transport,
+      getState: () => stateRef.current,
+      commit,
+      markBegun: () => { begunRef.current = true; },
+      now: () => performance.now(),
     });
+    transport.onMessage((message) => handleServerMessage(wiring, message));
 
     return () => { transport.close(); controllerRef.current = null; };
   }, [engine, relayBase, commit]);

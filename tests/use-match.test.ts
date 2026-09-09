@@ -2,11 +2,19 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   challengeUrl,
+  handleServerMessage,
+  liveWiring,
+  matchOverCopy,
   matchOverlay,
   reduceMatch,
   roomCodeFromLocation,
+  settleMatch,
   soloControls,
 } from "../app/net/useMatch.ts";
+import { CrackAttackEngine } from "../app/game/engine.ts";
+import { MatchController } from "../app/net/match.ts";
+import { STATE_LOST, SYNC_PERIOD_TICKS } from "../app/net/protocol.ts";
+import type { SyncMessage } from "../app/net/protocol.ts";
 import type { MatchPhase, MatchState } from "../app/net/useMatch.ts";
 
 test("reads a room code from the fragment", () => {
@@ -157,4 +165,134 @@ test("a socket that has given up says so instead of leaving the waiting card up"
   assert.equal(
     matchOverlay({ ...PLAYING, phase: "over", outcome: "win", status: "failed" }), "over",
   );
+});
+
+// --- the message-handler wiring -----------------------------------------
+// The one seam the fix wave left untested, and the one place F9 stayed
+// broken. The handler used to reduce once up front and commit that result
+// AFTER running the effects, so anything an effect settled was written back
+// over: a peer's STATE_LOST made controller.onSync fire onOutcome("win"),
+// which committed "over", and then the stale pre-message state landed on top.
+// The winner ended at phase "playing" with outcome null, staring at a solo
+// game-over card whose restart is disabled, with no way out but a reload.
+
+/**
+ * Drives the REAL MatchController and CrackAttackEngine through liveWiring --
+ * the same construction the hook uses -- so the test cannot drift from the
+ * hook by paraphrasing it. The fake transport commits a status change on
+ * close(), exactly as the hook's onStatus handler does, because that is what
+ * makes a naive "did the state change" guard the wrong fix.
+ */
+function makeWiring(phase: MatchPhase = "playing") {
+  let state: MatchState = { ...PLAYING, phase };
+  const commits: MatchState[] = [];
+  const commit = (next: MatchState) => {
+    if (next === state) return;
+    state = next;
+    commits.push(next);
+  };
+  const engine = new CrackAttackEngine({ seed: 7, multiplayer: true });
+  const transport = {
+    closed: false,
+    close() {
+      this.closed = true;
+      commit({ ...state, status: "closed" });
+    },
+  };
+  const controller = new MatchController(engine, transport as never);
+  controller.begin({ seed: 7, role: "host" }, 50_000);
+  controller.onOutcome = (outcome) => {
+    controller.end();
+    if (outcome === "win") engine.forfeitWin(controller.engineTime(performance.now()));
+    transport.close();
+    commit(settleMatch(state, outcome));
+  };
+  const wiring = liveWiring({
+    engine,
+    controller,
+    transport,
+    getState: () => state,
+    commit,
+    markBegun: () => {},
+    now: () => 50_000,
+  });
+  return { wiring, engine, controller, transport, commits, get state() { return state; } };
+}
+
+const lostSync = (tick: number): SyncMessage => (
+  { t: "sync", tick, lights: 0, state: STATE_LOST, attacks: [] }
+);
+
+test("a peer's STATE_LOST leaves us on the win screen, not still playing", () => {
+  const rig = makeWiring();
+  handleServerMessage(rig.wiring, lostSync(SYNC_PERIOD_TICKS));
+  assert.equal(rig.state.phase, "over", "the winner was left mid-match with no result");
+  assert.equal(rig.state.outcome, "win");
+  assert.equal(matchOverCopy(rig.state.outcome), "You win! Your opponent topped out.");
+});
+
+test("the played win stops the controller and closes the socket", () => {
+  const rig = makeWiring();
+  handleServerMessage(rig.wiring, lostSync(SYNC_PERIOD_TICKS));
+  assert.equal(rig.transport.closed, true);
+  // A settled controller must stop ticking. The fake transport has no send()
+  // at all, so if end() had not taken hold, the next period boundary would
+  // reach emitSync and throw rather than return a clock value.
+  assert.equal(rig.controller.tickTo(80_000), rig.controller.engineTime(80_000));
+  assert.equal(rig.controller.waitingForPeer, false, "a settled match should not stall");
+});
+
+test("an ordinary sync leaves the state untouched", () => {
+  const rig = makeWiring();
+  handleServerMessage(rig.wiring, {
+    t: "sync", tick: SYNC_PERIOD_TICKS, lights: 0b101, state: 0, attacks: [],
+  });
+  assert.equal(rig.state.phase, "playing");
+  assert.equal(rig.state.outcome, null);
+  assert.deepEqual(rig.commits, [], "an unremarkable sync must not force a re-render");
+});
+
+test("forfeit still reaches the win screen even though close() commits underneath it", () => {
+  const rig = makeWiring();
+  handleServerMessage(rig.wiring, { t: "forfeit" });
+  assert.equal(rig.state.phase, "over", "close()'s status commit swallowed the transition");
+  assert.equal(rig.state.outcome, "forfeit");
+  assert.equal(matchOverCopy(rig.state.outcome), "Your opponent didn't come back. You win.");
+  assert.equal(rig.state.status, "closed", "the status change must survive too");
+});
+
+test("error still reaches its own screen even though close() commits underneath it", () => {
+  for (const [reason, copy] of [
+    ["missing", "This challenge link has expired."],
+    ["full", "That game already has two players."],
+  ] as const) {
+    const rig = makeWiring();
+    handleServerMessage(rig.wiring, { t: "error", reason });
+    assert.equal(rig.state.phase, "over", `close() swallowed the ${reason} transition`);
+    assert.equal(matchOverCopy(rig.state.outcome), copy);
+    assert.equal(rig.state.status, "closed");
+  }
+});
+
+test("start and peer transitions still work through the handler", () => {
+  const rig = makeWiring("waiting");
+  handleServerMessage(rig.wiring, { t: "start", seed: 4242, role: "guest" });
+  assert.equal(rig.state.phase, "playing");
+  assert.equal(rig.controller.seed, 4242);
+  assert.equal(rig.controller.role, "guest");
+
+  handleServerMessage(rig.wiring, { t: "peer-left" });
+  assert.equal(rig.state.phase, "peer-gone");
+  handleServerMessage(rig.wiring, { t: "peer-back" });
+  assert.equal(rig.state.phase, "playing");
+});
+
+test("a settled match cannot be reopened through the handler", () => {
+  const rig = makeWiring();
+  handleServerMessage(rig.wiring, lostSync(SYNC_PERIOD_TICKS));
+  assert.equal(rig.state.outcome, "win");
+  handleServerMessage(rig.wiring, { t: "peer-left" });
+  handleServerMessage(rig.wiring, { t: "error", reason: "missing" });
+  assert.equal(rig.state.phase, "over");
+  assert.equal(rig.state.outcome, "win", "the win screen was relabelled after the fact");
 });

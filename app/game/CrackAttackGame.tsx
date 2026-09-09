@@ -36,29 +36,12 @@ import {
 } from "./touchControls";
 import {
   challengeUrl,
+  matchOverCopy,
   matchOverlay,
   roomCodeFromLocation,
   soloControls,
   useMatch,
 } from "../net/useMatch.ts";
-import type { MatchOutcome } from "../net/useMatch.ts";
-
-/**
- * What the match-over overlay says. Every reason a match can end gets its own
- * sentence: "Match over." on a dead link tells a player nothing about what to
- * do next, and this audience is six friends on phones, not developers reading
- * a console.
- */
-function matchOverCopy(outcome: MatchOutcome): string {
-  switch (outcome) {
-    case "win": return "You win! Your opponent topped out.";
-    case "loss": return "You topped out. Your opponent wins.";
-    case "forfeit": return "Your opponent didn't come back. You win.";
-    case "expired": return "This challenge link has expired.";
-    case "full": return "That game already has two players.";
-    default: return "Match over.";
-  }
-}
 
 const ASSET_LOAD_TIMEOUT_MS = 8000;
 // Deliberately unresolvable. .invalid is reserved by RFC 2606 and can never
