@@ -10,6 +10,10 @@ export type SocketFactory = (url: string) => WebSocket;
  *
  * `reconnectDelayMs` is injected rather than hardcoded so tests can drive
  * reconnection synchronously with a delay of 0.
+ *
+ * Handlers registered via `onStatus()` receive the current status immediately
+ * at registration time. This allows consumers to learn the transport's state
+ * without a race.
  */
 export class Transport {
   private socket: WebSocket | null = null;
@@ -19,6 +23,7 @@ export class Transport {
   private statusHandlers: Array<(s: TransportStatus) => void> = [];
   private deliberateClose = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private socketGeneration = 0;
   private url: string;
   private factory: SocketFactory;
   private reconnectDelayMs: number;
@@ -43,19 +48,28 @@ export class Transport {
     this.setStatus(this.socket ? "reconnecting" : "connecting");
     const socket = this.factory(this.url);
     this.socket = socket;
+    const generation = ++this.socketGeneration;
 
     socket.onopen = () => {
+      if (this.socketGeneration !== generation) return;
       this.setStatus("open");
       for (const queued of this.outbox.splice(0)) socket.send(queued);
     };
     socket.onmessage = (event: MessageEvent) => {
+      if (this.socketGeneration !== generation) return;
       const raw = typeof event.data === "string" ? event.data : "";
       const message = parseServerMessage(raw);
       if (!message) return;
       for (const handler of this.messageHandlers) handler(message);
     };
-    socket.onclose = () => this.handleDrop();
-    socket.onerror = () => this.handleDrop();
+    socket.onclose = () => {
+      if (this.socketGeneration !== generation) return;
+      this.handleDrop();
+    };
+    socket.onerror = () => {
+      if (this.socketGeneration !== generation) return;
+      this.handleDrop();
+    };
   }
 
   private handleDrop(): void {

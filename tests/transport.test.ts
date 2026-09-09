@@ -76,3 +76,54 @@ test("an explicit close does not reconnect", () => {
   assert.equal(seen.at(-1), "closed");
   assert.equal(FakeSocket.last, first);
 });
+
+test("close() cancels a pending reconnect timer", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const seen: string[] = [];
+  const transport = new Transport("wss://x/room/ABC123", factory, 100);
+  transport.onStatus((s) => seen.push(s));
+  FakeSocket.last!.onopen!();
+  const first = FakeSocket.last!;
+  first.onclose!();
+  assert.equal(seen.at(-1), "reconnecting");
+  transport.close();
+  assert.equal(seen.at(-1), "closed");
+  t.mock.timers.tick(200);
+  assert.equal(FakeSocket.last, first);
+  assert.equal(seen.at(-1), "closed");
+});
+
+test("a delayed reconnect actually reconnects", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const seen: string[] = [];
+  const transport = new Transport("wss://x/room/ABC123", factory, 100);
+  transport.onStatus((s) => seen.push(s));
+  FakeSocket.last!.onopen!();
+  const first = FakeSocket.last!;
+  first.onclose!();
+  assert.equal(seen.at(-1), "reconnecting");
+  t.mock.timers.tick(100);
+  assert.notEqual(FakeSocket.last, first);
+  assert.equal(seen.at(-1), "reconnecting");
+  FakeSocket.last!.onopen!();
+  assert.equal(seen.at(-1), "open");
+  transport.close();
+});
+
+test("a stale socket's close does not disturb the current connection", () => {
+  const seen: string[] = [];
+  const t = new Transport("wss://x/room/ABC123", factory, 0);
+  t.onStatus((s) => seen.push(s));
+  FakeSocket.last!.onopen!();
+  const first = FakeSocket.last!;
+  first.onclose!();
+  assert.equal(seen.at(-1), "reconnecting");
+  const second = FakeSocket.last!;
+  assert.notEqual(second, first);
+  second.onopen!();
+  assert.equal(seen.at(-1), "open");
+  first.onclose!();
+  assert.equal(seen.at(-1), "open");
+  assert.equal(FakeSocket.last, second);
+  t.close();
+});
