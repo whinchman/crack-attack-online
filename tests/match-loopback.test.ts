@@ -147,3 +147,128 @@ test("two controllers stay fair and consistent over a long, skewed run", () => {
     `remote attack arrived with only ${telegraphOnArrivalMs}ms of warning, expected >= 5000ms`,
   );
 });
+
+/**
+ * The gap every defect on this branch lived in. Two peers whose clocks are
+ * independent, start at different non-zero times, and do NOT stay smooth: a
+ * phone locking, a tab backgrounding, or rAF suspending advances one side's
+ * clock by seconds in a single step while the other carries on unaware.
+ *
+ * Before the stall heartbeat this deadlocked BOTH boards permanently. The
+ * jumped side is instantly far ahead of its peer's last reported tick, stalls,
+ * and -- returning before the sync block -- stops transmitting. The smooth
+ * side then runs out its own lead against a tick that has stopped moving,
+ * stalls, and stops transmitting too. Neither peerTick can ever advance again.
+ * No overlay, no timeout, no recovery but a reload, on both phones at once.
+ *
+ * The same run also exercises the wire's time base across the jump, since the
+ * two engines' clocks are now thousands of milliseconds apart in two different
+ * ways at once.
+ */
+test("a multi-second clock jump on one side does not deadlock the match", () => {
+  const { engineA, engineB, matchA, matchB, transportA, transportB } = makePair(11);
+
+  const dt = 20;
+  const rounds = 500;
+  const jumpAtRound = 200;
+  /** One tab-suspension's worth of real time, arriving in a single tick. */
+  const JUMP_MS = 4_000;
+
+  const valuesA: number[] = [];
+  const valuesB: number[] = [];
+  let stalledSeenAfterJump = false;
+  let syncsFromAAfterJump = 0;
+  let syncsFromBAfterJump = 0;
+  let bothRecoveredAtRound: number | null = null;
+  let attackQueuedWhileStalled = false;
+  let telegraphOnArrivalMs: number | null = null;
+
+  for (let i = 1; i <= rounds; i += 1) {
+    const jumped = i >= jumpAtRound;
+    // A's clock leaps once and then resumes its normal cadence from the new
+    // value; B's never stops being smooth.
+    const nowA = START_A + i * dt + (jumped ? JUMP_MS : 0);
+    const nowB = START_B + i * dt;
+
+    const clampedA = matchA.tickTo(nowA);
+    const clampedB = matchB.tickTo(nowB);
+    valuesA.push(clampedA);
+    valuesB.push(clampedB);
+    engineA.update(clampedA);
+    engineB.update(clampedB);
+
+    // Checked here, BEFORE this round's deliveries: onSync clears
+    // waitingForPeer unconditionally and the next tickTo re-raises it, so
+    // sampling after delivery would report a recovery that has not happened.
+    if (jumped) {
+      if (matchA.waitingForPeer || matchB.waitingForPeer) stalledSeenAfterJump = true;
+      else bothRecoveredAtRound ??= i;
+    }
+
+    // Queue garbage on the jumped side WHILE it is stalled. A stalled peer
+    // used to strand it; the heartbeat has to carry it out.
+    if (jumped && matchA.waitingForPeer && !attackQueuedWhileStalled) {
+      engineA.queueOutgoingAttack({
+        height: 3, width: 4, flavor: "normal", source: "clear", createdAt: clampedA,
+      });
+      attackQueuedWhileStalled = true;
+    }
+
+    const toA = transportB.drain();
+    const toB = transportA.drain();
+    if (jumped) {
+      syncsFromAAfterJump += toB.length;
+      syncsFromBAfterJump += toA.length;
+    }
+
+    for (const message of toA) matchA.onSync(message as SyncMessage);
+    for (const message of toB) {
+      const before = engineB.getSnapshot(nowB).incomingCount;
+      matchB.onSync(message as SyncMessage);
+      const after = engineB.getSnapshot(nowB);
+      if (after.incomingCount > before) telegraphOnArrivalMs ??= after.nextIncomingMs;
+    }
+  }
+
+  // Sanity on the scenario itself: a jump that never stalls anyone would
+  // assert nothing about the deadlock it exists to reproduce.
+  assert.ok(stalledSeenAfterJump, "test setup: the jump should have stalled someone");
+  assert.ok(attackQueuedWhileStalled, "test setup: nothing was queued while stalled");
+
+  // 1. Both sides keep TALKING across the jump. This is the deadlock itself:
+  // the original C++ Communicator blocks simulation, not communication.
+  assert.ok(syncsFromAAfterJump > 0, "the jumped peer stopped transmitting entirely");
+  assert.ok(syncsFromBAfterJump > 0, "the smooth peer stopped transmitting entirely");
+
+  // 2. Neither simulated clock ran backwards, jump included.
+  for (let i = 1; i < valuesA.length; i += 1) {
+    assert.ok(valuesA[i] >= valuesA[i - 1], `A went backwards: ${valuesA[i - 1]} -> ${valuesA[i]}`);
+  }
+  for (let i = 1; i < valuesB.length; i += 1) {
+    assert.ok(valuesB[i] >= valuesB[i - 1], `B went backwards: ${valuesB[i - 1]} -> ${valuesB[i]}`);
+  }
+
+  // 3. The match recovers within a bounded number of further rounds, and both
+  // boards are genuinely running again rather than merely un-flagged.
+  assert.ok(
+    bothRecoveredAtRound !== null,
+    "the match never recovered: both peers stalled and neither could resolve",
+  );
+  assert.ok(
+    valuesA.at(-1)! > valuesA[jumpAtRound - 1],
+    "the jumped board never resumed simulating",
+  );
+  assert.ok(
+    valuesB.at(-1)! > valuesB[jumpAtRound - 1],
+    "the smooth board never resumed simulating",
+  );
+
+  // 4. Garbage queued during the stall crosses over, and arrives with its
+  // telegraph intact -- the peers' engine clocks are thousands of ms apart in
+  // two different ways here, which is exactly where the time base broke.
+  assert.ok(telegraphOnArrivalMs !== null, "garbage queued during the stall was stranded");
+  assert.ok(
+    telegraphOnArrivalMs >= 5_000,
+    `garbage arrived with only ${telegraphOnArrivalMs}ms of warning, expected >= 5000ms`,
+  );
+});
